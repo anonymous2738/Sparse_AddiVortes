@@ -54,14 +54,12 @@ pub(crate) struct Prior {
     pub weights: Option<InclusionWeights>,
 }
 
-/// A fixed inclusion weight per column with its elementary symmetric
-/// polynomials e_k, the subset-prior normalising constants.
+/// A fixed inclusion weight per column, used by the DART variable
+/// selection prior.
 #[cfg(feature = "experimental")]
 #[derive(Debug, Clone)]
 pub(crate) struct InclusionWeights {
-    w: Vec<f64>,
-    /// e_k(w) for k = 0..=p; e_k = 0 beyond the positive-weight count.
-    e: Vec<f64>,
+    pub(crate) w: Vec<f64>,
 }
 
 #[cfg(feature = "experimental")]
@@ -78,20 +76,7 @@ impl InclusionWeights {
     /// Weights taken as given, without the equal-entries fold: sampled
     /// weight vectors keep their own values.
     pub(crate) fn sampled(w: Vec<f64>) -> Self {
-        let p = w.len();
-        let mut e = vec![0.0; p + 1];
-        e[0] = 1.0;
-        for &v in &w {
-            for k in (1..=p).rev() {
-                e[k] += v * e[k - 1];
-            }
-        }
-        Self { w, e }
-    }
-
-    /// ln e_d(w), the subset-prior normaliser at dimension count `d`.
-    pub(crate) fn log_e(&self, d: usize) -> f64 {
-        maths::ln(self.e[d])
+        Self { w }
     }
 
     /// The total weight of the columns not in `dims`.
@@ -185,19 +170,6 @@ impl Prior {
             return weights.draw_unused(&[], rng);
         }
         uniform_index(self.p, rng)
-    }
-
-    /// ln[prior x proposal] for adding a dimension to a subset of `d`
-    /// dims under the weighted prior: the count ratio, the subset-prior
-    /// normalisers e_d / e_(d+1), the forward pick's total unused weight,
-    /// and the reverse uniform removal 1 / (d + 1). The incoming weight
-    /// cancels between the subset prior and the forward pick.
-    #[cfg(feature = "experimental")]
-    fn log_weighted_add_ratio(&self, d: usize, unused_weight: f64) -> f64 {
-        let weights = self.weights.as_ref().expect("weighted prior");
-        self.log_dim_count_ratio(d + 1) + maths::ln(weights.e[d]) - maths::ln(weights.e[d + 1])
-            + maths::ln(unused_weight)
-            - maths::ln((d + 1) as f64)
     }
 
     /// Whether `m` may be proposed from dims `dims` as far as the
@@ -344,10 +316,23 @@ pub(crate) fn propose(
         Move::AddDimension => {
             #[cfg(feature = "experimental")]
             let (incoming, log_structure_ratio) = match &prior.weights {
-                Some(weights) => (
-                    weights.draw_unused(&t.dims, rng),
-                    prior.log_weighted_add_ratio(d, weights.unused_weight(&t.dims)),
-                ),
+                Some(weights) => {
+                    let incoming = weights.draw_unused(&t.dims, rng);
+                    let s_new = f64::max(weights.w[incoming], 1e-16);
+                    let s_unused_old = weights.unused_weight(&t.dims);
+                    // Model B prior ratio: log F(D_new) - log F(D_old)
+                    let log_prior_old = crate::aug::log_unordered_subset_prior(&t.dims, &weights.w);
+                    let mut new_dims = t.dims.to_vec();
+                    new_dims.push(incoming);
+                    let log_prior_new = crate::aug::log_unordered_subset_prior(&new_dims, &weights.w);
+                    let log_prior_ratio = log_prior_new - log_prior_old;
+                    // Proposal ratio: reverse is uniform removal 1/(d+1),
+                    // forward is weighted pick s_new / S_unused_old
+                    let log_q_ratio = -maths::ln((d + 1) as f64)
+                        + maths::ln(s_unused_old)
+                        - maths::ln(s_new);
+                    (incoming, prior.log_dim_count_ratio(d + 1) + log_prior_ratio + log_q_ratio)
+                }
                 None => (
                     unused_column(&t.dims, prior.p, uniform_index(prior.p - d, rng)),
                     prior.log_dim_count_ratio(d + 1),
@@ -371,6 +356,7 @@ pub(crate) fn propose(
         }
         Move::RemoveDimension => {
             let removed = uniform_index(d, rng);
+            let removed_var = t.dims[removed];
             out.dims.remove(removed);
             out.centres.clear();
             for k in 0..b {
@@ -386,7 +372,18 @@ pub(crate) fn propose(
                     #[cfg(feature = "experimental")]
                     match &prior.weights {
                         Some(weights) => {
-                            -prior.log_weighted_add_ratio(d - 1, weights.unused_weight(&out.dims))
+                            let s_old = f64::max(weights.w[removed_var], 1e-16);
+                            let s_unused_new = weights.unused_weight(&out.dims);
+                            // Model B prior ratio: log F(D_new) - log F(D_old)
+                            let log_prior_old = crate::aug::log_unordered_subset_prior(&t.dims, &weights.w);
+                            let log_prior_new = crate::aug::log_unordered_subset_prior(&out.dims, &weights.w);
+                            let log_prior_ratio = log_prior_new - log_prior_old;
+                            // Proposal ratio: forward is uniform removal 1/d,
+                            // reverse is weighted pick s_old / S_unused_new
+                            let log_q_ratio = maths::ln(s_old)
+                                - maths::ln(s_unused_new)
+                                + maths::ln(d as f64);
+                            -prior.log_dim_count_ratio(d) + log_prior_ratio + log_q_ratio
                         }
                         None => -prior.log_dim_count_ratio(d),
                     }
@@ -418,9 +415,25 @@ pub(crate) fn propose(
             let (incoming, log_structure_ratio) = match &prior.weights {
                 Some(weights) => {
                     let incoming = weights.draw_unused(&t.dims, rng);
-                    let before = weights.unused_weight(&t.dims);
-                    let after = before - weights.w[incoming] + weights.w[t.dims[removed]];
-                    (incoming, maths::ln(before) - maths::ln(after))
+                    let old_var = t.dims[removed];
+                    let s_old = f64::max(weights.w[old_var], 1e-16);
+                    let s_new = f64::max(weights.w[incoming], 1e-16);
+                    let s_unused_old = weights.unused_weight(&t.dims);
+                    // Model B prior ratio: log F(D_new) - log F(D_old)
+                    let log_prior_old = crate::aug::log_unordered_subset_prior(&t.dims, &weights.w);
+                    let mut new_dims = t.dims.to_vec();
+                    new_dims[removed] = incoming;
+                    let log_prior_new = crate::aug::log_unordered_subset_prior(&new_dims, &weights.w);
+                    let log_prior_ratio = log_prior_new - log_prior_old;
+                    // S_unused_new = S_unused_old - s_new + s_old
+                    let s_unused_new = s_unused_old - s_new + s_old;
+                    // Proposal ratio: forward picks incoming with s_new/S_unused_old,
+                    // reverse picks old_var with s_old/S_unused_new
+                    let log_q_ratio = maths::ln(s_old)
+                        - maths::ln(s_unused_new)
+                        - maths::ln(s_new)
+                        + maths::ln(s_unused_old);
+                    (incoming, log_prior_ratio + log_q_ratio)
                 }
                 None => (
                     unused_column(&t.dims, prior.p, uniform_index(prior.p - d, rng)),

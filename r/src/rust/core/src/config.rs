@@ -160,6 +160,13 @@ impl Default for Outcome {
 }
 
 impl Outcome {
+    pub(crate) fn sigma_hat_override(&self) -> Option<f64> {
+        match self {
+            Self::Gaussian(params) => params.sigma_hat,
+            _ => None,
+        }
+    }
+
     /// The Gaussian outcome with its default sigma^2 prior.
     pub fn gaussian() -> Self {
         Outcome::Gaussian(GaussianParams::default())
@@ -313,11 +320,14 @@ pub struct GaussianParams {
     /// sigma^2 prior calibration quantile q, Pr(sigma < sigma_hat) = q.
     /// Default 0.85.
     pub q: f64,
+    /// Optional manual initial estimate of sigma (on the unscaled response)
+    #[serde(default)]
+    pub sigma_hat: Option<f64>,
 }
 
 impl Default for GaussianParams {
     fn default() -> Self {
-        Self { nu: 6.0, q: 0.85 }
+        Self { nu: 6.0, q: 0.85, sigma_hat: None }
     }
 }
 
@@ -793,16 +803,46 @@ pub enum Inclusion {
     #[cfg(feature = "experimental")]
     #[cfg_attr(docsrs, doc(cfg(feature = "experimental")))]
     Dart {
-        /// Beta shape a of the concentration prior. Default 0.5.
+        /// Gamma shape a_alpha of the concentration prior. Default 0.5.
         #[serde(default = "default_dart_a")]
-        a: f64,
-        /// Beta shape b of the concentration prior. Default 1.
+        a_alpha: f64,
+        /// Gamma rate b_alpha of the concentration prior. Default 1.
         #[serde(default = "default_dart_b")]
-        b: f64,
-        /// The concentration scale rho; `None` resolves to p at fit.
-        #[serde(default, skip_serializing_if = "Option::is_none")]
-        rho: Option<f64>,
+        b_alpha: f64,
+        /// Adaptive momentum boost
+        #[serde(default)]
+        adapt_boost: f64,
+        /// Adaptive momentum penalty
+        #[serde(default)]
+        adapt_penalty: f64,
+        /// Adaptive momentum decay
+        #[serde(default)]
+        momentum_decay: f64,
+        /// Adaptation rate parameter
+        #[serde(default = "default_kappa")]
+        kappa: f64,
+        /// Adaptation scale parameter
+        #[serde(default = "default_tau")]
+        tau: f64,
+        /// Iterations before Dirichlet adaptation begins
+        #[serde(default = "default_dirichlet_warmup")]
+        dirichlet_warmup: usize,
     },
+}
+
+#[cfg(feature = "experimental")]
+fn default_kappa() -> f64 {
+    0.6
+}
+
+#[cfg(feature = "experimental")]
+fn default_tau() -> f64 {
+    50.0
+}
+
+#[cfg(feature = "experimental")]
+fn default_dirichlet_warmup() -> usize {
+    1000
 }
 
 #[cfg(feature = "experimental")]
@@ -1695,11 +1735,23 @@ fn validate_term(slot: &str, params: &TermParams) -> Result<()> {
                 return Err(invalid(&name, "at least one weight must be positive"));
             }
         }
-        Inclusion::Dart { a, b, rho } => {
-            positive(&format!("{slot}.structure.inclusion.a"), *a)?;
-            positive(&format!("{slot}.structure.inclusion.b"), *b)?;
-            if let Some(rho) = rho {
-                positive(&format!("{slot}.structure.inclusion.rho"), *rho)?;
+        Inclusion::Dart { a_alpha, b_alpha, adapt_boost, adapt_penalty, momentum_decay, kappa, tau, dirichlet_warmup: _ } => {
+            positive(&format!("{slot}.structure.inclusion.a_alpha"), *a_alpha)?;
+            positive(&format!("{slot}.structure.inclusion.b_alpha"), *b_alpha)?;
+            if *adapt_boost < 0.0 {
+                return Err(invalid(&format!("{slot}.structure.inclusion.adapt_boost"), "must be non-negative"));
+            }
+            if *adapt_penalty < 0.0 {
+                return Err(invalid(&format!("{slot}.structure.inclusion.adapt_penalty"), "must be non-negative"));
+            }
+            if *momentum_decay < 0.0 || *momentum_decay > 1.0 {
+                return Err(invalid(&format!("{slot}.structure.inclusion.momentum_decay"), "must be in [0, 1]"));
+            }
+            if *kappa <= 0.0 {
+                return Err(invalid(&format!("{slot}.structure.inclusion.kappa"), "must be positive"));
+            }
+            if *tau <= 0.0 {
+                return Err(invalid(&format!("{slot}.structure.inclusion.tau"), "must be positive"));
             }
         }
     }

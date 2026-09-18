@@ -149,6 +149,8 @@ impl<F: CellFamily> Ensemble<F> {
         input: &[f64],
         weights: &[f64],
         rng: &mut Rng,
+        #[cfg(feature = "experimental")] dart: &mut Option<crate::sampler::Dart>,
+        #[cfg(feature = "experimental")] iter: usize,
         #[cfg(test)] breakage: crate::broken::Breakage,
     ) {
         let mut scratch = std::mem::take(&mut self.scratch);
@@ -160,6 +162,10 @@ impl<F: CellFamily> Ensemble<F> {
                 input,
                 weights,
                 rng,
+                #[cfg(feature = "experimental")]
+                dart,
+                #[cfg(feature = "experimental")]
+                iter,
                 #[cfg(test)]
                 breakage,
             );
@@ -225,6 +231,8 @@ impl<F: CellFamily> Ensemble<F> {
         input: &[f64],
         weights: &[f64],
         rng: &mut Rng,
+        #[cfg(feature = "experimental")] dart: &mut Option<crate::sampler::Dart>,
+        #[cfg(feature = "experimental")] iter: usize,
         #[cfg(test)] breakage: crate::broken::Breakage,
     ) {
         let tau = self.tessellations[j].tau;
@@ -283,7 +291,39 @@ impl<F: CellFamily> Ensemble<F> {
             }
             debug_assert!(!log_alpha.is_nan());
             let u = rng::uniform(rng);
-            if maths::ln(u) < log_alpha {
+            let accepted = maths::ln(u) < log_alpha;
+
+            #[cfg(feature = "experimental")]
+            if let Some(dart) = dart {
+                if iter > dart.dirichlet_warmup {
+                    let t = (iter - dart.dirichlet_warmup + 1) as f64;
+                    let adaptation_scale = ((1.0 + dart.tau) / (t + dart.tau)).powf(dart.kappa);
+                    let current_boost = dart.adapt_boost * adaptation_scale;
+                    let current_penalty = dart.adapt_penalty * adaptation_scale;
+                    let acceptance_prob = log_alpha.min(0.0).exp();
+
+                    let added = match m {
+                        crate::moves::Move::AddDimension => scratch.tessellation.dims().iter().copied().find(|&d| !current.dims().contains(&d)),
+                        crate::moves::Move::Swap => scratch.tessellation.dims().iter().copied().find(|&d| !current.dims().contains(&d)),
+                        _ => None,
+                    };
+
+                    let removed = match m {
+                        crate::moves::Move::RemoveDimension => current.dims().iter().copied().find(|&d| !scratch.tessellation.dims().contains(&d)),
+                        crate::moves::Move::Swap => current.dims().iter().copied().find(|&d| !scratch.tessellation.dims().contains(&d)),
+                        _ => None,
+                    };
+
+                    if let Some(dim) = added {
+                        dart.momentum[dim] += current_boost * acceptance_prob;
+                    }
+                    if let Some(dim) = removed {
+                        dart.momentum[dim] += current_boost * (1.0 - acceptance_prob) - current_penalty * acceptance_prob;
+                    }
+                }
+            }
+
+            if accepted {
                 std::mem::swap(&mut self.tessellations[j], &mut scratch.tessellation);
                 std::mem::swap(&mut self.assignments[j], &mut scratch.assignment);
                 std::mem::swap(&mut scratch.current, &mut scratch.proposed);

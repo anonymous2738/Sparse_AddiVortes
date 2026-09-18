@@ -23,10 +23,15 @@
 #' @examples
 #' gaussian_outcome(nu = 3)
 #' @export
-gaussian_outcome <- function(nu = 6, q = 0.85) {
+gaussian_outcome <- function(nu = 6, q = 0.85, sigma_hat = NULL) {
   check_number(nu)
   check_number(q)
-  new_outcome("gaussian", list(nu = nu, q = q))
+  fields <- list(nu = nu, q = q)
+  if (!is.null(sigma_hat)) {
+    check_number(sigma_hat)
+    fields$sigma_hat <- sigma_hat
+  }
+  new_outcome("gaussian", fields)
 }
 
 #' The binary probit outcome family

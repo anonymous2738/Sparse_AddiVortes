@@ -1640,6 +1640,31 @@ impl Fitted {
             .collect()
     }
 
+    /// The proportion of iterations (after burn-in and thinning) in which
+    /// each variable was included in at least one tree in the ensemble.
+    pub fn ensemble_inclusion_probabilities(&self) -> Vec<f64> {
+        let n_draws = self.n_draws();
+        let p = self.scaler.n_cols();
+        if n_draws == 0 {
+            return vec![0.0; p];
+        }
+        let mut draw_counts = vec![0u64; p];
+        for draw in self.posterior.tessellations() {
+            let mut active_in_draw = vec![false; p];
+            for t in draw {
+                for &dim in t.dims() {
+                    active_in_draw[dim] = true;
+                }
+            }
+            for (dim, &is_active) in active_in_draw.iter().enumerate() {
+                if is_active {
+                    draw_counts[dim] += 1;
+                }
+            }
+        }
+        draw_counts.iter().map(|&c| c as f64 / n_draws as f64).collect()
+    }
+
     /// Number of kept draws.
     pub fn n_draws(&self) -> usize {
         self.posterior.n_draws()

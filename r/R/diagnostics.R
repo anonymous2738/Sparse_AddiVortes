@@ -86,6 +86,14 @@ variable_inclusion <- function(object) {
   proportions
 }
 
+#' @export
+ensemble_inclusion <- function(object) {
+  check_fit(object)
+  proportions <- core_call(core_diagnostics(fit_state(object)))$ensemble_inclusion
+  names(proportions) <- colnames(object$x)
+  proportions
+}
+
 #' Refuse an object that is not a fit
 #'
 #' @param object The object to check.

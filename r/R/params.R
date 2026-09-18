@@ -300,12 +300,27 @@ weighted_inclusion <- function(weights) {
 #' @examplesIf core_experimental()
 #' structure_params(inclusion = dart_inclusion())
 #' @export
-dart_inclusion <- function(a = 0.5, b = 1, rho = NULL) {
+dart_inclusion <- function(a_alpha = 0.5, b_alpha = 1, adapt_boost = 0.0, adapt_penalty = 0.0, momentum_decay = 0.0, kappa = 0.6, tau = 50.0, dirichlet_warmup = 1000) {
   lifecycle::signal_stage("experimental", "dart_inclusion()")
-  check_number(a)
-  check_number(b)
-  check_number(rho, allow_null = TRUE)
-  new_option("dart", list(a = a, b = b, rho = rho), "inclusion")
+  check_number(a_alpha, min = 0)
+  check_number(b_alpha, min = 0)
+  check_number(adapt_boost, min = 0)
+  check_number(adapt_penalty, min = 0)
+  check_number(momentum_decay, min = 0, max = 1)
+  check_number(kappa, min = 0)
+  check_number(tau, min = 0)
+  check_whole_number(dirichlet_warmup, min = 0)
+  fields <- list(
+    a_alpha = a_alpha,
+    b_alpha = b_alpha,
+    adapt_boost = adapt_boost,
+    adapt_penalty = adapt_penalty,
+    momentum_decay = momentum_decay,
+    kappa = kappa,
+    tau = tau,
+    dirichlet_warmup = as.integer(dirichlet_warmup)
+  )
+  new_option("dart", fields, "inclusion")
 }
 
 #' Construct a classed component option

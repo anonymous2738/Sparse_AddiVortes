@@ -304,7 +304,8 @@ fn core_diagnostics(state: ExternalPtr<FittedHandle>) -> Result<List> {
     Ok(list!(
         cell_count = fitted.cell_counts(),
         dimension_count = fitted.dimension_counts(),
-        inclusion = fitted.variable_inclusion_proportions()
+        inclusion = fitted.variable_inclusion_proportions(),
+        ensemble_inclusion = fitted.ensemble_inclusion_probabilities()
     ))
 }
 
