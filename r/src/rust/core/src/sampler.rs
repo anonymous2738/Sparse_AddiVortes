@@ -281,12 +281,11 @@ impl Dart {
     /// Dirichlet(theta / p).
     /// uniform for theta, then p gammas.
     #[allow(clippy::too_many_arguments)]
-    fn draw(a_alpha: f64, b_alpha: f64, adapt_boost: f64, adapt_penalty: f64, momentum_decay: f64, kappa: f64, tau: f64, dirichlet_warmup: usize, p: usize, rng: &mut crate::rng::Rng) -> Self {
-        // Initialise theta: draw from the Gamma(a_alpha, b_alpha) prior.
-        // Use the prior mode max(a_alpha - 1, 0.1) / b_alpha as a
-        // starting point, then take one prior gamma draw to randomise.
-        let theta = rng::gamma(a_alpha.max(0.5), 1.0 / b_alpha, rng).max(1e-4);
-        let s = draw_dirichlet(&vec![theta / p as f64; p], rng);
+    fn draw(alpha: f64, a_alpha: f64, b_alpha: f64, adapt_boost: f64, adapt_penalty: f64, momentum_decay: f64, kappa: f64, tau: f64, dirichlet_warmup: usize, p: usize) -> Self {
+        let theta = alpha.max(1e-4);
+        // The upstream implementation starts with uniform inclusion weights;
+        // the first Dirichlet draw occurs after the warmup period.
+        let s = vec![1.0 / p as f64; p];
         Self {
             theta,
             a_alpha,
@@ -772,8 +771,8 @@ impl Sampler {
         let mut rng = rng::chain_rng(seed);
         #[cfg(feature = "experimental")]
         let dart = match &config.mean_params.structure.inclusion {
-            crate::config::Inclusion::Dart { a_alpha, b_alpha, adapt_boost, adapt_penalty, momentum_decay, kappa, tau, dirichlet_warmup } => {
-                Some(Dart::draw(*a_alpha, *b_alpha, *adapt_boost, *adapt_penalty, *momentum_decay, *kappa, *tau, *dirichlet_warmup, p, &mut rng))
+            crate::config::Inclusion::Dart { alpha, a_alpha, b_alpha, adapt_boost, adapt_penalty, momentum_decay, kappa, tau, dirichlet_warmup } => {
+                Some(Dart::draw(*alpha, *a_alpha, *b_alpha, *adapt_boost, *adapt_penalty, *momentum_decay, *kappa, *tau, *dirichlet_warmup, p))
             }
             _ => None,
         };

@@ -295,15 +295,23 @@ weighted_inclusion <- function(weights) {
 #' Statistical Association* 113(522), 626-636.
 #' \doi{10.1080/01621459.2016.1264957}
 #'
+#' @param alpha Initial Dirichlet concentration. Default 1, matching the
+#'   upstream AddiVortes implementation. The Gamma prior parameters
+#'   [a_alpha] and [b_alpha] govern subsequent concentration updates.
+#'
 #' @seealso [structure_params()], [weighted_inclusion()],
 #'   [core_experimental()]
 #' @examplesIf core_experimental()
 #' structure_params(inclusion = dart_inclusion())
 #' @export
-dart_inclusion <- function(a_alpha = 0.5, b_alpha = 1, adapt_boost = 0.0, adapt_penalty = 0.0, momentum_decay = 0.0, kappa = 0.6, tau = 50.0, dirichlet_warmup = 1000) {
+dart_inclusion <- function(a_alpha = 0.5, b_alpha = 1, alpha = 1,
+                           adapt_boost = 0.0, adapt_penalty = 0.0,
+                           momentum_decay = 0.0, kappa = 0.6, tau = 50.0,
+                           dirichlet_warmup = 1000) {
   lifecycle::signal_stage("experimental", "dart_inclusion()")
   check_number(a_alpha, min = 0)
   check_number(b_alpha, min = 0)
+  check_number(alpha, min = 0)
   check_number(adapt_boost, min = 0)
   check_number(adapt_penalty, min = 0)
   check_number(momentum_decay, min = 0, max = 1)
@@ -313,6 +321,7 @@ dart_inclusion <- function(a_alpha = 0.5, b_alpha = 1, adapt_boost = 0.0, adapt_
   fields <- list(
     a_alpha = a_alpha,
     b_alpha = b_alpha,
+    alpha = alpha,
     adapt_boost = adapt_boost,
     adapt_penalty = adapt_penalty,
     momentum_decay = momentum_decay,

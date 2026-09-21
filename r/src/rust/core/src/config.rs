@@ -803,6 +803,10 @@ pub enum Inclusion {
     #[cfg(feature = "experimental")]
     #[cfg_attr(docsrs, doc(cfg(feature = "experimental")))]
     Dart {
+        /// Initial Dirichlet concentration. Default 1, matching the
+        /// upstream AddiVortes implementation.
+        #[serde(default = "default_dart_alpha")]
+        alpha: f64,
         /// Gamma shape a_alpha of the concentration prior. Default 0.5.
         #[serde(default = "default_dart_a")]
         a_alpha: f64,
@@ -828,6 +832,11 @@ pub enum Inclusion {
         #[serde(default = "default_dirichlet_warmup")]
         dirichlet_warmup: usize,
     },
+}
+
+#[cfg(feature = "experimental")]
+fn default_dart_alpha() -> f64 {
+    1.0
 }
 
 #[cfg(feature = "experimental")]
@@ -1735,7 +1744,8 @@ fn validate_term(slot: &str, params: &TermParams) -> Result<()> {
                 return Err(invalid(&name, "at least one weight must be positive"));
             }
         }
-        Inclusion::Dart { a_alpha, b_alpha, adapt_boost, adapt_penalty, momentum_decay, kappa, tau, dirichlet_warmup: _ } => {
+        Inclusion::Dart { alpha, a_alpha, b_alpha, adapt_boost, adapt_penalty, momentum_decay, kappa, tau, dirichlet_warmup: _ } => {
+            positive(&format!("{slot}.structure.inclusion.alpha"), *alpha)?;
             positive(&format!("{slot}.structure.inclusion.a_alpha"), *a_alpha)?;
             positive(&format!("{slot}.structure.inclusion.b_alpha"), *b_alpha)?;
             if *adapt_boost < 0.0 {

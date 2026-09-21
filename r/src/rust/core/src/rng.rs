@@ -62,6 +62,13 @@ pub(crate) fn gamma(shape: f64, scale: f64, rng: &mut Rng) -> f64 {
         .sample(rng)
 }
 
+/// Binomial(successes, probability) draw.
+pub(crate) fn binomial(successes: u64, probability: f64, rng: &mut Rng) -> u64 {
+    rand_distr::Binomial::new(successes, probability)
+        .expect("successes and probability are valid by construction")
+        .sample(rng)
+}
+
 /// Inverse-Gaussian(mean, shape) draw, both positive: density
 /// sqrt(shape / (2 pi x^3)) exp(-shape (x - mean)^2 / (2 mean^2 x)).
 #[cfg(feature = "experimental")]

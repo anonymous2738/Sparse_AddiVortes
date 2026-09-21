@@ -27,7 +27,6 @@ pub(crate) fn log_unordered_subset_prior(dims: &[usize], weights: &[f64]) -> f64
 
     for mask in 1..nmask {
         let mut max_lp = f64::NEG_INFINITY;
-        let mut candidates = Vec::with_capacity(d_len);
 
         for j in 0..d_len {
             let bit = 1 << j;
@@ -38,14 +37,21 @@ pub(crate) fn log_unordered_subset_prior(dims: &[usize], weights: &[f64]) -> f64
             let s_j = f64::max(weights[dims[j]], 1e-16);
             let denom = f64::max(1.0 - sum_w[prev], 1e-16);
             let lp = log_f[prev] + crate::maths::ln(s_j) - crate::maths::ln(denom);
-            candidates.push(lp);
             if lp > max_lp {
                 max_lp = lp;
             }
         }
 
         let mut sum_exp = 0.0;
-        for &lp in &candidates {
+        for j in 0..d_len {
+            let bit = 1 << j;
+            if (mask & bit) == 0 {
+                continue;
+            }
+            let prev = mask ^ bit;
+            let s_j = f64::max(weights[dims[j]], 1e-16);
+            let denom = f64::max(1.0 - sum_w[prev], 1e-16);
+            let lp = log_f[prev] + crate::maths::ln(s_j) - crate::maths::ln(denom);
             sum_exp += crate::maths::exp(lp - max_lp);
         }
         log_f[mask] = max_lp + crate::maths::ln(sum_exp);
@@ -77,7 +83,6 @@ pub(crate) fn sample_order_given_unordered_set(dims: &[usize], weights: &[f64], 
 
     for mask in 1..nmask {
         let mut max_lp = f64::NEG_INFINITY;
-        let mut candidates = Vec::with_capacity(d_len);
 
         for j in 0..d_len {
             let bit = 1 << j;
@@ -88,14 +93,21 @@ pub(crate) fn sample_order_given_unordered_set(dims: &[usize], weights: &[f64], 
             let s_j = f64::max(weights[dims[j]], 1e-16);
             let denom = f64::max(1.0 - sum_w[prev], 1e-16);
             let lp = log_f[prev] + crate::maths::ln(s_j) - crate::maths::ln(denom);
-            candidates.push(lp);
             if lp > max_lp {
                 max_lp = lp;
             }
         }
 
         let mut sum_exp = 0.0;
-        for &lp in &candidates {
+        for j in 0..d_len {
+            let bit = 1 << j;
+            if (mask & bit) == 0 {
+                continue;
+            }
+            let prev = mask ^ bit;
+            let s_j = f64::max(weights[dims[j]], 1e-16);
+            let denom = f64::max(1.0 - sum_w[prev], 1e-16);
+            let lp = log_f[prev] + crate::maths::ln(s_j) - crate::maths::ln(denom);
             sum_exp += crate::maths::exp(lp - max_lp);
         }
         log_f[mask] = max_lp + crate::maths::ln(sum_exp);
@@ -103,10 +115,13 @@ pub(crate) fn sample_order_given_unordered_set(dims: &[usize], weights: &[f64], 
 
     let mut order = vec![0; d_len];
     let mut mask = nmask - 1;
+    let mut log_probs = Vec::with_capacity(d_len);
+    let mut candidate_bits = Vec::with_capacity(d_len);
+    let mut probs = Vec::with_capacity(d_len);
 
     for pos in (0..d_len).rev() {
-        let mut log_probs = Vec::with_capacity(d_len);
-        let mut candidate_bits = Vec::with_capacity(d_len);
+        log_probs.clear();
+        candidate_bits.clear();
         let mut max_lp = f64::NEG_INFINITY;
 
         for j in 0..d_len {
@@ -127,7 +142,7 @@ pub(crate) fn sample_order_given_unordered_set(dims: &[usize], weights: &[f64], 
         }
 
         let mut sum_exp = 0.0;
-        let mut probs = Vec::with_capacity(log_probs.len());
+        probs.clear();
         for &lp in &log_probs {
             let p = crate::maths::exp(lp - max_lp);
             probs.push(p);
@@ -157,6 +172,12 @@ pub(crate) fn sample_order_given_unordered_set(dims: &[usize], weights: &[f64], 
 
 pub(crate) fn rmultinom(n: u64, probs: &[f64], rng: &mut crate::rng::Rng) -> Vec<u64> {
     let mut counts = vec![0; probs.len()];
+    if probs.len() <= 1 {
+        if let Some(count) = counts.first_mut() {
+            *count = n;
+        }
+        return counts;
+    }
     let mut sum_p = 0.0;
     for &p in probs {
         sum_p += p;
@@ -164,21 +185,23 @@ pub(crate) fn rmultinom(n: u64, probs: &[f64], rng: &mut crate::rng::Rng) -> Vec
     if sum_p <= 0.0 {
         return counts;
     }
-    
-    for _ in 0..n {
-        let mut u = crate::rng::uniform(rng) * sum_p;
-        let mut idx = 0;
-        for (i, &p) in probs.iter().enumerate() {
-            u -= p;
-            if u <= 0.0 {
-                idx = i;
-                break;
-            }
+
+    // Draw the multinomial through sequential binomials. This has the same
+    // distribution as n categorical draws, but avoids work proportional to n
+    // when adaptive DART produces a large augmented failure count.
+    let mut remaining = n;
+    let mut remaining_probability = sum_p;
+    for (index, &probability) in probs.iter().enumerate().take(probs.len() - 1) {
+        if remaining == 0 {
+            break;
         }
-        if idx >= probs.len() {
-            idx = probs.len() - 1;
-        }
-        counts[idx] += 1;
+        let conditional_probability = (probability / remaining_probability).clamp(0.0, 1.0);
+        counts[index] = crate::rng::binomial(remaining, conditional_probability, rng);
+        remaining -= counts[index];
+        remaining_probability -= probability;
+    }
+    if let Some(last) = counts.last_mut() {
+        *last = remaining;
     }
     counts
 }
