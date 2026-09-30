@@ -16,6 +16,7 @@ thiessen(x, ...)
   seed = NULL,
   chains = 4,
   threads = getOption("mc.cores", 1L),
+  xtest = NULL,
   ...
 )
 
@@ -26,6 +27,7 @@ thiessen(x, ...)
   seed = NULL,
   chains = 4,
   threads = getOption("mc.cores", 1L),
+  xtest = NULL,
   ...
 )
 
@@ -36,6 +38,7 @@ thiessen(x, ...)
   seed = NULL,
   chains = 4,
   threads = getOption("mc.cores", 1L),
+  xtest = NULL,
   ...
 )
 }
@@ -73,6 +76,9 @@ interfaces do, so \code{options(mc.cores = 4)} is the one-line opt-in and
 a session that sets nothing runs on one thread, where a default fit
 is four chains long.}
 
+\item{xtest}{Optional test design. When supplied, return only posterior-
+mean predictions at these rows without retaining fitted tessellations.}
+
 \item{formula}{A two-sided formula. The left side names the response and
 the right side the covariates, \code{.} for every remaining column.}
 
@@ -87,7 +93,8 @@ the design, the response the in-sample fit is measured against (the
 numeric response, the factor codes, or under a censored family the
 observed values on the model's scale, the log times under the AFT
 family), the fitted values, the residuals against that response, the
-hardhat blueprint where one applies, and the call.
+hardhat blueprint where one applies, and the call. With \code{xtest}, a
+numeric vector of posterior-mean predictions is returned instead.
 }
 \description{
 AddiVortes is Bayesian regression on a sum of Voronoi tessellations
@@ -111,7 +118,8 @@ numeric vector the Gaussian family, a two-level factor the probit family
 ordered factor the ordinal family (the \code{MASS::polr} convention), a
 \code{\link[survival:Surv]{survival::Surv()}} of type \code{"right"} the AFT family and one of type
 \code{"interval2"} the interval-censored family (an \code{NA} bound is one-sided
-censoring and an equal pair an exact value). A family named in
+censoring and an equal pair an exact value). An unordered factor with more
+than two levels is unsupported. A family named in
 \code{control} is checked against the response and never coerced: the
 probit family also takes the numbers 0 and 1, and every other family
 takes only the shape that selects it. This is \code{glm}'s rule, the

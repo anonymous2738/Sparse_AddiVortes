@@ -17,7 +17,8 @@
 #' The response selects the outcome family where `control` names none: a
 #' numeric vector the Gaussian family, a two-level factor the probit family
 #' (0 and 1 with the first level as the zero, as `glm` treats one), an
-#' ordered factor the ordinal family (the `MASS::polr` convention), a
+#' ordered factor the ordinal family (the `MASS::polr` convention), while
+#' an unordered factor with more than two levels is unsupported; a
 #' [survival::Surv()] of type `"right"` the AFT family and one of type
 #' `"interval2"` the interval-censored family (an `NA` bound is one-sided
 #' censoring and an equal pair an exact value). A family named in
@@ -113,6 +114,9 @@
 #'   vector, a two-level factor, an ordered factor, or a
 #'   [survival::Surv()] of type `"right"` or `"interval2"`. Under the
 #'   probit model a numeric vector must hold 0 and 1.
+#' @param xtest Optional covariates at which to return posterior-mean
+#'   predictions. When supplied, no fitted model or posterior draws are
+#'   retained.
 #' @param control An object of class `"thiessen_control"`, from
 #'   [thiessen_control()].
 #' @param chains The number of chains to run, a whole number. Each chain
@@ -134,7 +138,9 @@
 #'   draws for a given package version and platform.
 #' @param ... Passed to the method.
 #'
-#' @return An object of class `"thiessen"`: a list with the fitted state,
+#' @return With `xtest`, a numeric vector of posterior-mean predictions and
+#'   no retained fitted state. Otherwise, an object of class `"thiessen"`:
+#'   a list with the fitted state,
 #'   the resolved configuration, the number of chains, the thread count,
 #'   the number of kept draws, the
 #'   convergence diagnostics where two or more chains ran, the seed used,
@@ -184,19 +190,20 @@ thiessen <- function(x, ...) {
 #' @export
 thiessen.default <- function(x, y, control = thiessen_control(), seed = NULL,
                              chains = 4,
-                             threads = getOption("mc.cores", 1L), ...) {
+           threads = getOption("mc.cores", 1L), xtest = NULL, ...) {
   rlang::check_dots_empty()
   design <- as_design(x)
   response <- as_response(y)
+  test_design <- if (is.null(xtest)) NULL else as_design(xtest, "xtest")
   new_fit(design, response, control, seed, chains, threads,
-          generic_call(match.call()))
+    generic_call(match.call()), xtest = test_design)
 }
 
 #' @rdname thiessen
 #' @export
 thiessen.data.frame <- function(x, y, control = thiessen_control(),
                                 seed = NULL, chains = 4,
-                                threads = getOption("mc.cores", 1L), ...) {
+                                threads = getOption("mc.cores", 1L), xtest = NULL, ...) {
   rlang::check_dots_empty()
   molded <- core_call(
     hardhat::mold(~ ., data = x, blueprint = blueprint_for(control))
@@ -206,15 +213,22 @@ thiessen.data.frame <- function(x, y, control = thiessen_control(),
     control$mean_params$geometry$metric
   )
   response <- as_response(y)
+  test_design <- if (is.null(xtest)) {
+    NULL
+  } else {
+    forged <- core_call(hardhat::forge(xtest, molded$blueprint))
+    encode_predictors(forged$predictors, molded$blueprint$indicators)
+  }
   new_fit(design, response, control, seed, chains, threads,
-          generic_call(match.call()), blueprint = molded$blueprint)
+          generic_call(match.call()), blueprint = molded$blueprint,
+          xtest = test_design)
 }
 
 #' @rdname thiessen
 #' @export
 thiessen.formula <- function(formula, data, control = thiessen_control(),
                              seed = NULL, chains = 4,
-                             threads = getOption("mc.cores", 1L), ...) {
+                             threads = getOption("mc.cores", 1L), xtest = NULL, ...) {
   rlang::check_dots_empty()
   molded <- core_call(
     hardhat::mold(formula, data, blueprint = blueprint_for(control))
@@ -224,8 +238,15 @@ thiessen.formula <- function(formula, data, control = thiessen_control(),
     control$mean_params$geometry$metric
   )
   response <- encode_response(molded$outcomes)
+  test_design <- if (is.null(xtest)) {
+    NULL
+  } else {
+    forged <- core_call(hardhat::forge(xtest, molded$blueprint))
+    encode_predictors(forged$predictors, molded$blueprint$indicators)
+  }
   new_fit(design, response, control, seed, chains, threads,
-          generic_call(match.call()), blueprint = molded$blueprint)
+          generic_call(match.call()), blueprint = molded$blueprint,
+          xtest = test_design)
 }
 
 #' The method call with the generic's name, so `update()` can re-evaluate it
@@ -252,7 +273,8 @@ generic_call <- function(call) {
 #' @return An object of class `"thiessen"`.
 #' @noRd
 new_fit <- function(design, response, control, seed, chains, threads, call,
-                    blueprint = NULL, call_env = rlang::caller_env()) {
+                    blueprint = NULL, xtest = NULL,
+                    call_env = rlang::caller_env()) {
   if (response$n != nrow(design)) {
     thiessen_abort(
       sprintf(
@@ -267,6 +289,11 @@ new_fit <- function(design, response, control, seed, chains, threads, call,
   chains <- resolve_chains(chains, call = call_env)
   threads <- resolve_threads(threads, call = call_env)
   resolved <- resolve_seed(seed, call = call_env)
+  if (!is.null(xtest)) {
+    return(run_prediction_schedule(
+      control, design, response, xtest, resolved, chains, threads
+    ))
+  }
   # The progressor's life must span the whole fit, so the count never ends
   # it: `auto_finish` would close the handler on the last step, and the
   # frame this progressor belongs to exits when the fit is complete.
@@ -283,6 +310,25 @@ new_fit <- function(design, response, control, seed, chains, threads, call,
   assemble_fit(fit, design, response, resolved, call, threads = threads,
                blueprint = blueprint, call_env = call_env, report = report,
                phase_steps = phase_steps)
+}
+
+#' Run a schedule that keeps only posterior-mean predictions at `xtest`.
+#' @noRd
+run_prediction_schedule <- function(control, design, response, xtest, seed,
+                                    chains, threads) {
+  samplers <- lapply(seq_len(chains) - 1L, function(chain) {
+    new_sampler_handle(config_json(control), design, response, seed, chain)
+  })
+  core_call(
+    .Call(
+      "wrap__core_samplers_predict",
+      samplers, xtest,
+      as.integer(control$general_params$burn_in),
+      as.integer(control$general_params$draws),
+      as.integer(control$general_params$thinning), threads,
+      PACKAGE = "thiessen"
+    )
+  )
 }
 
 #' Run the sweep schedule of every chain and pool the draws

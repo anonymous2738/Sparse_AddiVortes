@@ -111,9 +111,10 @@
 #![forbid(unsafe_code)]
 #![deny(rustdoc::broken_intra_doc_links)]
 
-mod aug;
 #[cfg(test)]
 mod broken;
+#[cfg(feature = "experimental")]
+mod aug;
 mod cells;
 mod config;
 mod data;

@@ -44,7 +44,9 @@ config_paths <- function(tree, prefix = "") {
 
 # Groups the core serialises empty at their defaults, so the path is the
 # group itself; the surface names their one field.
-UNEXPOSED <- c("mean_params.cell", "variance_params.cell")
+UNEXPOSED <- c(
+  "mean_params.cell", "variance_params.cell", "outcome.gaussian.sigma_hat"
+)
 
 test_that("every surface argument is a core option", {
   expect_no_error(full_control())

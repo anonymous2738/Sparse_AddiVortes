@@ -266,6 +266,8 @@ pub(crate) struct Dart {
     pub(crate) a_alpha: f64,
     pub(crate) b_alpha: f64,
     pub(crate) s: Vec<f64>,
+    pub(crate) proposal_s: Vec<f64>,
+    pub(crate) proposal_tilt: Vec<f64>,
     pub(crate) momentum: Vec<f64>,
     pub(crate) adapt_boost: f64,
     pub(crate) adapt_penalty: f64,
@@ -273,6 +275,16 @@ pub(crate) struct Dart {
     pub(crate) kappa: f64,
     pub(crate) tau: f64,
     pub(crate) dirichlet_warmup: usize,
+    /// Sweeps after which momentum stops accumulating (only decays):
+    /// the configured burn-in, so the proposal settles down once the
+    /// kept draws start instead of continuing to drift throughout
+    /// sampling.
+    pub(crate) burn_in: usize,
+    pub(crate) momentum_settle: usize,
+    pub(crate) momentum_window: usize,
+    pub(crate) momentum_sum: Vec<f64>,
+    counts: Vec<f64>,
+    nonzero_counts: Vec<f64>,
 }
 
 #[cfg(feature = "experimental")]
@@ -281,7 +293,7 @@ impl Dart {
     /// Dirichlet(theta / p).
     /// uniform for theta, then p gammas.
     #[allow(clippy::too_many_arguments)]
-    fn draw(alpha: f64, a_alpha: f64, b_alpha: f64, adapt_boost: f64, adapt_penalty: f64, momentum_decay: f64, kappa: f64, tau: f64, dirichlet_warmup: usize, p: usize) -> Self {
+    fn draw(alpha: f64, a_alpha: f64, b_alpha: f64, adapt_boost: f64, adapt_penalty: f64, momentum_decay: f64, kappa: f64, tau: f64, dirichlet_warmup: usize, momentum_settle: usize, momentum_window: usize, burn_in: usize, p: usize) -> Self {
         let theta = alpha.max(1e-4);
         // The upstream implementation starts with uniform inclusion weights;
         // the first Dirichlet draw occurs after the warmup period.
@@ -291,6 +303,8 @@ impl Dart {
             a_alpha,
             b_alpha,
             s,
+            proposal_s: vec![1.0 / p as f64; p],
+            proposal_tilt: vec![1.0; p],
             momentum: vec![0.0; p],
             adapt_boost,
             adapt_penalty,
@@ -298,21 +312,36 @@ impl Dart {
             kappa,
             tau,
             dirichlet_warmup,
+            burn_in,
+            momentum_settle,
+            momentum_window,
+            momentum_sum: vec![0.0; p],
+            counts: vec![0.0; p],
+            nonzero_counts: Vec::new(),
         }
     }
 }
 
-/// A Dirichlet draw by normalised gammas, one gamma per coordinate.
-/// A tiny shape makes the gamma underflow to zero; the draw is floored
-/// at the smallest positive normal so the logs downstream stay finite.
+/// Draw a Dirichlet conditional into a reusable buffer by normalised gammas.
 #[cfg(feature = "experimental")]
-fn draw_dirichlet(shapes: &[f64], rng: &mut rng::Rng) -> Vec<f64> {
-    let draws: Vec<f64> = shapes
-        .iter()
-        .map(|&shape| rng::gamma(shape, 1.0, rng).max(f64::MIN_POSITIVE))
-        .collect();
-    let total: f64 = draws.iter().sum();
-    draws.iter().map(|&g| g / total).collect()
+fn draw_dirichlet_from_counts(
+    theta: f64,
+    p: usize,
+    counts: &[f64],
+    rng: &mut rng::Rng,
+    weights: &mut [f64],
+) {
+    let base_prior_shape = theta / p as f64;
+    let mut total = 0.0;
+    for (weight, &count) in weights.iter_mut().zip(counts) {
+        let shape = f64::max(base_prior_shape + count, 1e-10);
+        *weight = rng::gamma(shape, 1.0, rng).max(f64::MIN_POSITIVE);
+        total += *weight;
+    }
+    let inverse_total = 1.0 / total;
+    for weight in weights {
+        *weight *= inverse_total;
+    }
 }
 
 /// The extra data channel of a gated outcome, alongside the response.
@@ -771,8 +800,8 @@ impl Sampler {
         let mut rng = rng::chain_rng(seed);
         #[cfg(feature = "experimental")]
         let dart = match &config.mean_params.structure.inclusion {
-            crate::config::Inclusion::Dart { alpha, a_alpha, b_alpha, adapt_boost, adapt_penalty, momentum_decay, kappa, tau, dirichlet_warmup } => {
-                Some(Dart::draw(*alpha, *a_alpha, *b_alpha, *adapt_boost, *adapt_penalty, *momentum_decay, *kappa, *tau, *dirichlet_warmup, p))
+            crate::config::Inclusion::Dart { alpha, a_alpha, b_alpha, adapt_boost, adapt_penalty, momentum_decay, kappa, tau, dirichlet_warmup, momentum_settle, momentum_window } => {
+                Some(Dart::draw(*alpha, *a_alpha, *b_alpha, *adapt_boost, *adapt_penalty, *momentum_decay, *kappa, *tau, *dirichlet_warmup, *momentum_settle, *momentum_window, config.general_params.burn_in, p))
             }
             _ => None,
         };
@@ -803,6 +832,23 @@ impl Sampler {
             laws,
             #[cfg(feature = "experimental")]
             weights: inclusion_weights,
+            #[cfg(feature = "experimental")]
+            proposal_weights: match &config.mean_params.structure.inclusion {
+                crate::config::Inclusion::Uniform => None,
+                crate::config::Inclusion::Weighted { weights } => {
+                    crate::moves::InclusionWeights::new(weights)
+                }
+                crate::config::Inclusion::Dart {
+                    adapt_boost,
+                    adapt_penalty,
+                    ..
+                } if *adapt_boost != 0.0 || *adapt_penalty != 0.0 => Some(
+                    crate::moves::InclusionWeights::sampled(
+                        dart.as_ref().expect("dart state").proposal_s.clone(),
+                    ),
+                ),
+                crate::config::Inclusion::Dart { .. } => None,
+            },
         };
         let mean_y = y_scaled.iter().sum::<f64>() / n as f64;
 
@@ -986,6 +1032,7 @@ impl Sampler {
         #[cfg(feature = "experimental")]
         {
             self.iter += 1;
+            self.refresh_proposal_weights();
         }
         self.update_noise(true);
         self.mean.sweep(
@@ -1004,6 +1051,29 @@ impl Sampler {
         self.update_inclusion();
     }
 
+    /// Update the proposal-only DART weights for this sweep. The sampled
+    /// inclusion weights stay untouched and continue to define the prior.
+    #[cfg(feature = "experimental")]
+    fn refresh_proposal_weights(&mut self) {
+        let Some(dart) = &mut self.dart else {
+            return;
+        };
+        if dart.adapt_boost == 0.0 && dart.adapt_penalty == 0.0 {
+            return;
+        }
+        for (proposal, (&weight, &momentum)) in dart
+            .proposal_s
+            .iter_mut()
+            .zip(dart.s.iter().zip(&dart.proposal_tilt))
+        {
+            *proposal = weight.max(1e-300) * momentum;
+        }
+        self.mean.update_proposal_weights(&dart.proposal_s);
+        if let Some(variance) = &mut self.variance {
+            variance.update_proposal_weights(&dart.proposal_s);
+        }
+    }
+
     /// The DART updates: s | dims, theta by a Metropolis step whose
     /// Dirichlet(theta / p + counts) proposal leaves the subset-prior
     /// normalisers e_d in the ratio, then theta | s exactly on its grid.
@@ -1014,29 +1084,40 @@ impl Sampler {
             return;
         };
         let p = dart.s.len();
-        let mut counts = vec![0.0_f64; p];
-        let mut dim_lists: Vec<Vec<usize>> = Vec::new();
+        let mut counts = std::mem::take(&mut dart.counts);
+        counts.resize(p, 0.0);
+        counts.fill(0.0);
+        let mut nonzero_counts = std::mem::take(&mut dart.nonzero_counts);
+        nonzero_counts.clear();
+        let mut dim_lists: Vec<&[usize]> = Vec::new();
 
-        let mut tally = |tessellations: &[crate::tessellation::Tessellation]| {
-            for t in tessellations {
-                let dims = t.dims().to_vec();
-                for &dim in &dims {
-                    counts[dim] += 1.0;
-                }
-                dim_lists.push(dims);
+        for tessellation in self
+            .mean
+            .tessellations()
+            .iter()
+            .chain(self.variance.iter().flat_map(|variance| variance.tessellations()))
+        {
+            let dims = tessellation.dims();
+            for &dim in dims {
+                counts[dim] += 1.0;
             }
-        };
-        tally(self.mean.tessellations());
-        if let Some(variance) = &self.variance {
-            tally(variance.tessellations());
+            dim_lists.push(dims);
         }
 
         if self.iter > dart.dirichlet_warmup {
+            let mut probs_buf: Vec<f64> = Vec::new();
+            let mut allocation_buf: Vec<u64> = Vec::new();
+            let mut order_workspace = crate::aug::OrderWorkspace::default();
             for dims in dim_lists {
                 let d_len = dims.len();
                 if d_len == 0 { continue; }
                 
-                let latent_order = crate::aug::sample_order_given_unordered_set(&dims, &dart.s, &mut self.rng);
+                let latent_order = crate::aug::sample_order_given_unordered_set(
+                    dims,
+                    &dart.s,
+                    &mut self.rng,
+                    &mut order_workspace,
+                );
                 
                 for k in 1..d_len {
                     let mut sum_inel = 0.0;
@@ -1053,13 +1134,16 @@ impl Sampler {
                         if k == 1 {
                             counts[latent_order[0]] += failures as f64;
                         } else {
-                            let mut probs = vec![0.0; k];
+                            probs_buf.clear();
+                            probs_buf.extend(latent_order.iter().take(k).map(|&item| dart.s[item]));
+                            crate::aug::rmultinom_into(
+                                failures,
+                                &probs_buf,
+                                &mut self.rng,
+                                &mut allocation_buf,
+                            );
                             for e in 0..k {
-                                probs[e] = dart.s[latent_order[e]];
-                            }
-                            let alloc = crate::aug::rmultinom(failures, &probs, &mut self.rng);
-                            for e in 0..k {
-                                counts[latent_order[e]] += alloc[e] as f64;
+                                counts[latent_order[e]] += allocation_buf[e] as f64;
                             }
                         }
                     }
@@ -1073,7 +1157,13 @@ impl Sampler {
                     + maths::ln(dart.theta),
             );
 
-            let total_counts: f64 = counts.iter().sum();
+            let mut total_counts = 0.0;
+            for &count in &counts {
+                if count > 0.0 {
+                    nonzero_counts.push(count);
+                    total_counts += count;
+                }
+            }
 
             // Evaluate log posterior: Dirichlet-Multinomial likelihood
             // + Gamma(a_alpha, b_alpha) prior, at a given theta value.
@@ -1082,10 +1172,8 @@ impl Sampler {
                 let mut log_lik = maths::lgamma(safe_a)
                     - maths::lgamma(safe_a + total_counts);
                 let c = safe_a / p as f64;
-                for &cnt in &counts {
-                    if cnt > 0.0 {
-                        log_lik += maths::lgamma(c + cnt) - maths::lgamma(c);
-                    }
+                for &cnt in &nonzero_counts {
+                    log_lik += maths::lgamma(c + cnt) - maths::lgamma(c);
                 }
                 let log_prior = (dart.a_alpha - 1.0) * maths::ln(safe_a)
                     - dart.b_alpha * safe_a;
@@ -1104,29 +1192,45 @@ impl Sampler {
             }
 
             // ---- Draw s from Dirichlet(theta/p + counts) ----
-            let mut shapes: Vec<f64> = Vec::with_capacity(p);
-            let base_prior_shape = dart.theta / p as f64;
-            let decay = dart.momentum_decay;
-            for (i, &m) in counts.iter().enumerate() {
-                let base_shape = base_prior_shape + m;
-                let safe_momentum = f64::max(dart.momentum[i], -0.95 * base_shape);
-                shapes.push(f64::max(base_shape + safe_momentum, 1e-10));
-                dart.momentum[i] *= decay;
-            }
-            dart.s = draw_dirichlet(&shapes, &mut self.rng);
+            draw_dirichlet_from_counts(
+                dart.theta,
+                p,
+                &counts,
+                &mut self.rng,
+                &mut dart.s,
+            );
         } else {
-            let decay = dart.momentum_decay;
+            drop(dim_lists);
             for i in 0..p {
                 dart.s[i] = 1.0 / p as f64;
-                dart.momentum[i] *= decay;
             }
         }
 
-        let weights = crate::moves::InclusionWeights::sampled(dart.s.clone());
-        self.mean.set_inclusion_weights(weights.clone());
-        if let Some(variance) = &mut self.variance {
-            variance.set_inclusion_weights(weights);
+        let t_adapt = dart.burn_in.saturating_sub(dart.momentum_settle);
+        if self.iter <= t_adapt {
+            let in_window = self.iter > t_adapt.saturating_sub(dart.momentum_window);
+            for (i, (momentum, tilt)) in dart.momentum.iter_mut().zip(&mut dart.proposal_tilt).enumerate() {
+                *momentum *= dart.momentum_decay;
+                *tilt = maths::exp(momentum.clamp(-30.0, 30.0));
+                if in_window {
+                    dart.momentum_sum[i] += *momentum;
+                }
+            }
+            if self.iter == t_adapt && dart.momentum_window > 0 {
+                for (i, (momentum, tilt)) in dart.momentum.iter_mut().zip(&mut dart.proposal_tilt).enumerate() {
+                    let m_star = dart.momentum_sum[i] / (dart.momentum_window as f64);
+                    *momentum = m_star.clamp(-30.0, 30.0);
+                    *tilt = maths::exp(*momentum);
+                }
+            }
         }
+
+        self.mean.update_inclusion_weights(&dart.s);
+        if let Some(variance) = &mut self.variance {
+            variance.update_inclusion_weights(&dart.s);
+        }
+        dart.counts = counts;
+        dart.nonzero_counts = nonzero_counts;
     }
 
     /// The DART inclusion state, (weights, concentration), when the
@@ -1140,6 +1244,18 @@ impl Sampler {
             self.dart
                 .as_ref()
                 .map(|dart| (dart.s.as_slice(), dart.theta))
+        }
+    }
+
+    /// The adaptive-DART momentum of each covariate, when the structure
+    /// prior samples one; `None` under another inclusion prior and in a
+    /// build without the feature.
+    pub fn momentum_state(&self) -> Option<&[f64]> {
+        #[cfg(not(feature = "experimental"))]
+        return None;
+        #[cfg(feature = "experimental")]
+        {
+            self.dart.as_ref().map(|dart| dart.momentum.as_slice())
         }
     }
 
@@ -1296,6 +1412,46 @@ impl Sampler {
         });
     }
 
+    /// Advance each sampler and sum its current prediction at `x` after
+    /// each retained draw. Unlike [`Self::advance_all`], this stores no
+    /// posterior state.
+    pub fn prediction_sums_all(
+        samplers: &mut [&mut Sampler],
+        x: &Data,
+        burn_in: usize,
+        draws: usize,
+        thinning: usize,
+        threads: usize,
+    ) -> Result<Vec<Vec<f64>>> {
+        if samplers.is_empty() {
+            return Err(crate::error::invalid("chains", "at least one chain is required"));
+        }
+        // Validate before workers begin; every chain shares the configuration.
+        samplers[0].predict_current(x)?;
+        let mut work: Vec<(&mut Sampler, Vec<f64>)> = samplers
+            .iter_mut()
+            .map(|sampler| (&mut **sampler, vec![0.0; x.n_rows()]))
+            .collect();
+        crate::threads::spread(&mut work, threads, |(sampler, sums)| {
+            for _ in 0..burn_in {
+                sampler.step();
+            }
+            for _ in 0..draws {
+                for _ in 0..thinning {
+                    sampler.step();
+                }
+                for (sum, value) in sums.iter_mut().zip(
+                    sampler
+                        .predict_current(x)
+                        .expect("prediction data was validated before workers started"),
+                ) {
+                    *sum += value;
+                }
+            }
+        });
+        Ok(work.into_iter().map(|(_, sums)| sums).collect())
+    }
+
     /// Record the current state as a posterior draw.
     pub fn keep(&mut self) {
         let sigma_sq = (self.outcome.sigma2_mode().samples_global_sigma_sq()
@@ -1320,6 +1476,7 @@ impl Sampler {
         #[cfg(not(feature = "experimental"))]
         let df = None;
         let inclusion = self.inclusion_state().map(|(s, theta)| (s.to_vec(), theta));
+        let momentum = self.momentum_state().map(<[f64]>::to_vec);
         self.kept.push(
             sigma_sq,
             self.mean.tessellations().to_vec(),
@@ -1327,6 +1484,7 @@ impl Sampler {
             cutpoints,
             df,
             inclusion,
+            momentum,
         );
         self.accumulate_fit();
     }
@@ -1590,6 +1748,51 @@ impl Sampler {
             .iter()
             .map(|&f| self.scaler.unscale_y(f) + offset)
             .collect()
+    }
+
+    /// The current posterior-mean prediction at arbitrary rows, on the
+    /// caller's scale. This evaluates the live sampler without retaining a
+    /// posterior draw.
+    pub fn predict_current(&self, x: &Data) -> Result<Vec<f64>> {
+        crate::data::validate_predict(x, self.scaler.n_cols())?;
+        let geometry = self.mean.geometry();
+        geometry.check_codes(x)?;
+        let x_scaled = self.scaler.scale_x(x);
+        let offset = self.offset();
+        let probit = self.outcome.as_probit().is_some();
+
+        let mut out = Vec::with_capacity(x_scaled.n_rows());
+        for i in 0..x_scaled.n_rows() {
+            let row = x_scaled.row(i);
+            let f: f64 = self
+                .mean
+                .tessellations()
+                .iter()
+                .map(|t| t.value_at(row, geometry))
+                .sum();
+            let latent = self.scaler.unscale_y(f) + offset;
+            #[cfg(feature = "experimental")]
+            let prediction = if let Some(ordinal) = self.outcome.as_ordinal() {
+                maths::normal_cdf(latent)
+                    + ordinal
+                        .free_cutpoints()
+                        .iter()
+                        .map(|&cutpoint| maths::normal_cdf(latent - cutpoint))
+                        .sum::<f64>()
+            } else if probit {
+                maths::normal_cdf(latent)
+            } else {
+                latent
+            };
+            #[cfg(not(feature = "experimental"))]
+            let prediction = if probit {
+                maths::normal_cdf(latent)
+            } else {
+                latent
+            };
+            out.push(prediction);
+        }
+        Ok(out)
     }
 
     /// The response the in-sample fit is measured against, caller scale:
@@ -1949,6 +2152,17 @@ mod tests {
             sampler.set_response(&vec![f64::NAN; 30]),
             Err(Error::NonFiniteResponse { row: 0 })
         ));
+    }
+
+    #[test]
+    fn current_prediction_matches_fitted_values_without_keeping_a_draw() {
+        let (x, y) = toy(30);
+        let mut sampler = Sampler::new(&small(), &x, &y, 1).unwrap();
+        for _ in 0..20 {
+            sampler.step();
+        }
+        assert_eq!(sampler.predict_current(&x).unwrap(), sampler.fitted_values());
+        assert_eq!(sampler.n_kept(), 0);
     }
 
     #[test]

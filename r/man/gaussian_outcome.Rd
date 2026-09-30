@@ -4,7 +4,7 @@
 \alias{gaussian_outcome}
 \title{The Gaussian outcome family}
 \usage{
-gaussian_outcome(nu = 6, q = 0.85)
+gaussian_outcome(nu = 6, q = 0.85, sigma_hat = NULL)
 }
 \arguments{
 \item{nu}{Degrees of freedom nu of the sigma^2 prior,

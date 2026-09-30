@@ -21,7 +21,8 @@ use crate::threads;
 /// cutpoints per draw under the ordinal model above two categories; the
 /// error degrees of freedom per draw under the Student-t model with a
 /// grid; the inclusion weights and their concentration per draw under
-/// the DART inclusion prior.
+/// the DART inclusion prior; the adaptive momentum per draw under the
+/// DART inclusion prior with adaptive momentum.
 ///
 /// The soft-membership bandwidth is not here: it belongs to a
 /// tessellation and is kept on it, one per tessellation per draw.
@@ -39,6 +40,8 @@ pub struct Posterior {
     inclusion_weights: Vec<Vec<f64>>,
     #[serde(skip_serializing_if = "Vec::is_empty", default)]
     concentration: Vec<f64>,
+    #[serde(skip_serializing_if = "Vec::is_empty", default)]
+    momentum: Vec<Vec<f64>>,
 }
 
 impl Posterior {
@@ -51,6 +54,7 @@ impl Posterior {
             dfs: Vec::new(),
             inclusion_weights: Vec::new(),
             concentration: Vec::new(),
+            momentum: Vec::new(),
         }
     }
 
@@ -62,6 +66,7 @@ impl Posterior {
         cutpoints: Option<Vec<f64>>,
         df: Option<f64>,
         inclusion: Option<(Vec<f64>, f64)>,
+        momentum: Option<Vec<f64>>,
     ) {
         self.sigma_sq.extend(sigma_sq);
         self.tessellations.push(tessellations);
@@ -71,6 +76,9 @@ impl Posterior {
         if let Some((weights, concentration)) = inclusion {
             self.inclusion_weights.push(weights);
             self.concentration.push(concentration);
+        }
+        if let Some(momentum) = momentum {
+            self.momentum.push(momentum);
         }
     }
 
@@ -120,6 +128,14 @@ impl Posterior {
         &self.concentration
     }
 
+    /// The adaptive-DART momentum of each covariate, in column order, per
+    /// draw; empty outside the DART inclusion prior with adaptive
+    /// momentum. Log-domain, tilting the proposal weights away from the
+    /// sampled inclusion weights `s`.
+    pub fn momentum(&self) -> &[Vec<f64>] {
+        &self.momentum
+    }
+
     pub(crate) fn extend(&mut self, other: &Self) {
         self.sigma_sq.extend_from_slice(&other.sigma_sq);
         self.tessellations.extend_from_slice(&other.tessellations);
@@ -130,6 +146,7 @@ impl Posterior {
         self.inclusion_weights
             .extend_from_slice(&other.inclusion_weights);
         self.concentration.extend_from_slice(&other.concentration);
+        self.momentum.extend_from_slice(&other.momentum);
     }
 }
 
@@ -147,6 +164,8 @@ struct PosteriorParts {
     inclusion_weights: Vec<Vec<f64>>,
     #[serde(default)]
     concentration: Vec<f64>,
+    #[serde(default)]
+    momentum: Vec<Vec<f64>>,
 }
 
 impl TryFrom<PosteriorParts> for Posterior {
@@ -164,6 +183,7 @@ impl TryFrom<PosteriorParts> for Posterior {
             dfs,
             inclusion_weights,
             concentration,
+            momentum,
         } = parts;
         let tessellations = tessellation_draws(tessellations)?;
         let variance_tessellations = tessellation_draws(variance_tessellations)?;
@@ -261,6 +281,20 @@ impl TryFrom<PosteriorParts> for Posterior {
         {
             return Err(bad("concentration draws must be finite and positive"));
         }
+        if !(momentum.is_empty() || momentum.len() == n_draws) {
+            return Err(bad("momentum must be absent or one set per draw"));
+        }
+        if let Some(first) = momentum.first() {
+            let p = first.len();
+            if p == 0 || momentum.iter().any(|m| m.len() != p) {
+                return Err(bad(
+                    "every draw must hold the same positive number of momentum values",
+                ));
+            }
+            if momentum.iter().flatten().any(|m| !m.is_finite()) {
+                return Err(bad("momentum values must be finite"));
+            }
+        }
         Ok(Self {
             sigma_sq,
             tessellations,
@@ -269,6 +303,7 @@ impl TryFrom<PosteriorParts> for Posterior {
             dfs,
             inclusion_weights,
             concentration,
+            momentum,
         })
     }
 }
@@ -1552,6 +1587,15 @@ impl Fitted {
     /// (`docs/experimental.md`).
     pub fn concentration_draws(&self) -> &[f64] {
         self.posterior.concentration()
+    }
+
+    /// The adaptive-DART momentum of each covariate, in column order, per
+    /// kept draw; empty outside the DART inclusion prior with adaptive
+    /// momentum (`adapt_boost` or `adapt_penalty` above zero). Log-domain,
+    /// tilting the proposal weights away from the sampled inclusion
+    /// weights. Experimental (`docs/experimental.md`).
+    pub fn momentum_draws(&self) -> &[Vec<f64>] {
+        self.posterior.momentum()
     }
 
     /// The soft-membership kernel bandwidth of each mean tessellation,

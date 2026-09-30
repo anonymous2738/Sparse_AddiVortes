@@ -10,8 +10,8 @@
 #'   the ordinal model, f(x) on the log-time scale under the AFT model);
 #'   `"draws"`, that quantity for every kept draw; `"latent"`, the mean
 #'   function f for every kept draw; `"variance"`, the variance of y given
-#'   f for every kept draw; `"probs"`, under the ordinal model only, the
-#'   posterior-mean probability of each category, the `MASS::polr` name.
+#'   f for every kept draw; `"probs"`, under the ordinal or nominal
+#'   categorical model, the posterior-mean probability of each category.
 #' @param interval `"none"`, the default; `"credible"` for the interval of
 #'   the posterior mean; `"prediction"` for the posterior predictive
 #'   interval. Only with `type = "mean"`.
@@ -59,6 +59,12 @@ predict.thiessen <- function(object, newdata = NULL,
   }
   if (interval != "none" && type != "mean") {
     thiessen_abort("An interval is available for `type = \"mean\"` only.")
+  }
+  if (identical(attr(object$control$outcome, "kind"), "categorical") &&
+      type != "probs") {
+    thiessen_abort(
+      "Nominal categorical fits require `type = \"probs\"`; use `max.col()` to obtain class labels."
+    )
   }
   check_probability(level)
   state <- fit_state(object)

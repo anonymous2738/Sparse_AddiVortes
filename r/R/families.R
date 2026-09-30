@@ -16,6 +16,8 @@
 #'   requires nu > 2.
 #' @param q Calibration quantile q of the sigma^2 prior,
 #'   Pr(sigma < sigma_hat) = q. Default 0.85.
+#' @param sigma_hat Optional manual estimate of the residual standard
+#'   deviation on the unscaled response; `NULL` calibrates it from the data.
 #'
 #' @return An object of class `c("thiessen_gaussian", "thiessen_outcome")`.
 #'
@@ -26,12 +28,8 @@
 gaussian_outcome <- function(nu = 6, q = 0.85, sigma_hat = NULL) {
   check_number(nu)
   check_number(q)
-  fields <- list(nu = nu, q = q)
-  if (!is.null(sigma_hat)) {
-    check_number(sigma_hat)
-    fields$sigma_hat <- sigma_hat
-  }
-  new_outcome("gaussian", fields)
+  check_number(sigma_hat, min = 0, allow_null = TRUE)
+  new_outcome("gaussian", list(nu = nu, q = q, sigma_hat = sigma_hat))
 }
 
 #' The binary probit outcome family

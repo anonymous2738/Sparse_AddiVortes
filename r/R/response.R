@@ -9,7 +9,7 @@
 #' one of type `"interval"` (the `"interval2"` encoding) the
 #' interval-censored family; an ordered factor selects the ordinal family,
 #' a two-level factor the probit family, and a numeric vector the Gaussian
-#' family.
+#' family. An unordered factor with more than two levels is unsupported.
 #'
 #' @param y The response as the caller gave it.
 #' @param call The calling environment to report.
@@ -42,7 +42,8 @@ as_response <- function(y, call = rlang::caller_env()) {
   new_response("plain", "numeric", y = as.double(y))
 }
 
-#' A factor response: ordered as ordinal codes, two levels as labels
+#' A factor response: ordered as ordinal codes and two levels as probit
+#' labels; unordered factors with more levels are unsupported.
 #'
 #' The codes are 0 to K - 1 with the first level as 0, as `glm` treats a
 #' factor response and `MASS::polr` an ordered one.
@@ -61,7 +62,7 @@ factor_response <- function(y, call) {
   }
   if (nlevels(y) != 2L) {
     thiessen_abort(
-      "A factor response must have two levels, or be an ordered factor.",
+      "Unordered factor responses with more than two levels are not supported; use an ordered factor or a numeric response.",
       call = call
     )
   }

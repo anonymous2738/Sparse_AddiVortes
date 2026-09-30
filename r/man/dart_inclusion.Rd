@@ -4,9 +4,23 @@
 \alias{dart_inclusion}
 \title{The DART sparsity prior over the covariates}
 \usage{
-dart_inclusion(a = 0.5, b = 1, rho = NULL)
+dart_inclusion(
+  a_alpha = 0.5,
+  b_alpha = 1,
+  alpha = 1,
+  adapt_boost = 0,
+  adapt_penalty = 0,
+  momentum_decay = 0,
+  kappa = 0.6,
+  tau = 50,
+  dirichlet_warmup = 1000
+)
 }
 \arguments{
+\item{alpha}{Initial Dirichlet concentration. Default 1, matching the
+upstream AddiVortes implementation. The Gamma prior parameters
+\link{a_alpha} and \link{b_alpha} govern subsequent concentration updates.}
+
 \item{a}{Beta shape a of the concentration prior. Default 0.5.}
 
 \item{b}{Beta shape b of the concentration prior. Default 1.}

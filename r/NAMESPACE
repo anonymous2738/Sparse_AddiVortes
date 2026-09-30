@@ -93,4 +93,3 @@ importFrom(stats,
   sigma
 )
 useDynLib(thiessen, .registration = TRUE)
-export(ensemble_inclusion)

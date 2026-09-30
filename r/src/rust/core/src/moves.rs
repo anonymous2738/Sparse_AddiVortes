@@ -52,6 +52,10 @@ pub(crate) struct Prior {
     /// including a weight vector whose entries are all equal.
     #[cfg(feature = "experimental")]
     pub weights: Option<InclusionWeights>,
+    /// Momentum-adjusted weights used only to choose dimensions in add and
+    /// swap proposals. The structural prior always uses `weights`.
+    #[cfg(feature = "experimental")]
+    pub proposal_weights: Option<InclusionWeights>,
 }
 
 /// A fixed inclusion weight per column, used by the DART variable
@@ -60,6 +64,14 @@ pub(crate) struct Prior {
 #[derive(Debug, Clone)]
 pub(crate) struct InclusionWeights {
     pub(crate) w: Vec<f64>,
+    cumulative: Vec<f64>,
+    /// Precomputed once per construction (every sweep, for DART's sampled
+    /// weights) so `unused_weight`/`has_positive_unused` need not rescan
+    /// all p columns on every move proposal, which matters when p is in
+    /// the hundreds or thousands: sum(w) and the count of strictly
+    /// positive entries.
+    total: f64,
+    positive_count: usize,
 }
 
 #[cfg(feature = "experimental")]
@@ -76,21 +88,52 @@ impl InclusionWeights {
     /// Weights taken as given, without the equal-entries fold: sampled
     /// weight vectors keep their own values.
     pub(crate) fn sampled(w: Vec<f64>) -> Self {
-        Self { w }
+        let mut cumulative = Vec::with_capacity(w.len() + 1);
+        cumulative.push(0.0);
+        let mut total = 0.0;
+        let mut positive_count = 0;
+        for &weight in &w {
+            total += weight;
+            positive_count += usize::from(weight > 0.0);
+            cumulative.push(total);
+        }
+        Self {
+            w,
+            cumulative,
+            total,
+            positive_count,
+        }
     }
 
-    /// The total weight of the columns not in `dims`.
+    pub(crate) fn replace(&mut self, weights: &[f64]) {
+        debug_assert_eq!(self.w.len(), weights.len());
+        self.w.copy_from_slice(weights);
+        self.cumulative[0] = 0.0;
+        self.total = 0.0;
+        self.positive_count = 0;
+        for (index, &weight) in weights.iter().enumerate() {
+            self.total += weight;
+            self.positive_count += usize::from(weight > 0.0);
+            self.cumulative[index + 1] = self.total;
+        }
+    }
+
+    /// The total weight of the columns not in `dims`: sum(w) minus the
+    /// weight of the (few, already-known) columns in `dims`, rather than
+    /// a fresh scan of every column not in `dims`.
     fn unused_weight(&self, dims: &[usize]) -> f64 {
-        self.w
-            .iter()
-            .enumerate()
-            .filter(|(col, _)| !dims.contains(col))
-            .map(|(_, &v)| v)
-            .sum()
+        let used: f64 = dims.iter().map(|&col| self.w[col]).sum();
+        f64::max(self.total - used, 1e-16)
     }
 
-    /// Whether any column outside `dims` has positive weight.
+    /// Whether any column outside `dims` has positive weight. If more
+    /// columns are positive than `dims` can possibly hold, one of them
+    /// must lie outside it (pigeonhole), so the common case (DART weights
+    /// are all strictly positive) is answered without a scan at all.
     fn has_positive_unused(&self, dims: &[usize]) -> bool {
+        if self.positive_count > dims.len() {
+            return true;
+        }
         self.w
             .iter()
             .enumerate()
@@ -98,23 +141,49 @@ impl InclusionWeights {
     }
 
     /// A column drawn with probability proportional to its weight among
-    /// the columns not in `dims`, with one uniform.
-    fn draw_unused(&self, dims: &[usize], rng: &mut Rng) -> usize {
+    /// the columns not in `dims`, using the cached weighted CDF; returns the
+    /// unused total for the proposal ratio.
+    fn draw_unused(&self, dims: &[usize], rng: &mut Rng) -> (usize, f64) {
         let total = self.unused_weight(dims);
         let target = uniform(rng) * total;
-        let mut cumulative = 0.0;
-        let mut last = None;
-        for (col, &v) in self.w.iter().enumerate() {
-            if v <= 0.0 || dims.contains(&col) {
-                continue;
-            }
-            cumulative += v;
-            last = Some(col);
-            if target < cumulative {
-                return col;
+        let mut lower = 0;
+        let mut upper = self.w.len();
+        while lower < upper {
+            let middle = lower + (upper - lower) / 2;
+            let used_before: f64 = dims
+                .iter()
+                .filter(|&&dim| dim <= middle)
+                .map(|&dim| self.w[dim])
+                .sum();
+            if self.cumulative[middle + 1] - used_before > target {
+                upper = middle;
+            } else {
+                lower = middle + 1;
             }
         }
-        last.expect("a positive unused weight")
+        if lower < self.w.len() && self.w[lower] > 0.0 && !dims.contains(&lower) {
+            return (lower, total);
+        }
+
+        let mut cumulative = 0.0;
+        for (col, &weight) in self.w.iter().enumerate() {
+            if weight <= 0.0 || dims.contains(&col) {
+                continue;
+            }
+            cumulative += weight;
+            if target < cumulative {
+                return (col, total);
+            }
+        }
+        let last = self
+            .w
+            .iter()
+            .enumerate()
+            .rev()
+            .find(|(col, weight)| **weight > 0.0 && !dims.contains(col))
+            .map(|(col, _)| col)
+            .expect("a positive unused weight");
+        (last, total)
     }
 }
 
@@ -136,6 +205,8 @@ impl Prior {
             ],
             #[cfg(feature = "experimental")]
             weights: None,
+            #[cfg(feature = "experimental")]
+            proposal_weights: None,
         }
     }
 
@@ -167,7 +238,7 @@ impl Prior {
     pub(crate) fn initial_dim(&self, rng: &mut Rng) -> usize {
         #[cfg(feature = "experimental")]
         if let Some(weights) = &self.weights {
-            return weights.draw_unused(&[], rng);
+            return weights.draw_unused(&[], rng).0;
         }
         uniform_index(self.p, rng)
     }
@@ -176,7 +247,7 @@ impl Prior {
     /// inclusion prior is concerned.
     fn inclusion_permits(&self, m: Move, dims: &[usize]) -> bool {
         #[cfg(feature = "experimental")]
-        if let Some(weights) = &self.weights {
+        if let Some(weights) = &self.proposal_weights {
             if matches!(m, Move::AddDimension | Move::Swap) {
                 return weights.has_positive_unused(dims);
             }
@@ -229,7 +300,13 @@ impl Move {
 /// Selection probabilities in state `t`: invalid moves fold their weight
 /// into their partner, then the valid mass is normalised.
 pub(crate) fn selection_probs(t: &Tessellation, prior: &Prior) -> [f64; 6] {
-    let valid = MOVES.map(|m| m.valid(t, prior));
+    // AddDimension and Swap share the same "some unused column has positive
+    // weight" check, so compute it once instead of twice.
+    let dimension_move_ok = t.n_dims() < prior.p && prior.inclusion_permits(Move::AddDimension, &t.dims);
+    let valid = MOVES.map(|m| match m {
+        Move::AddDimension | Move::Swap => dimension_move_ok,
+        _ => m.valid(t, prior),
+    });
     let mut probs = [0.0_f64; 6];
     for (i, &m) in MOVES.iter().enumerate() {
         if valid[i] {
@@ -317,9 +394,9 @@ pub(crate) fn propose(
             #[cfg(feature = "experimental")]
             let (incoming, log_structure_ratio) = match &prior.weights {
                 Some(weights) => {
-                    let incoming = weights.draw_unused(&t.dims, rng);
-                    let s_new = f64::max(weights.w[incoming], 1e-16);
-                    let s_unused_old = weights.unused_weight(&t.dims);
+                    let proposal_weights = prior.proposal_weights.as_ref().unwrap_or(weights);
+                    let (incoming, s_unused_old) = proposal_weights.draw_unused(&t.dims, rng);
+                    let s_new = f64::max(proposal_weights.w[incoming], 1e-16);
                     // Model B prior ratio: log F(D_new) - log F(D_old)
                     let log_prior_old = crate::aug::log_unordered_subset_prior(&t.dims, &weights.w);
                     let mut new_dims = t.dims.to_vec();
@@ -372,8 +449,9 @@ pub(crate) fn propose(
                     #[cfg(feature = "experimental")]
                     match &prior.weights {
                         Some(weights) => {
-                            let s_old = f64::max(weights.w[removed_var], 1e-16);
-                            let s_unused_new = weights.unused_weight(&out.dims);
+                            let proposal_weights = prior.proposal_weights.as_ref().unwrap_or(weights);
+                            let s_old = f64::max(proposal_weights.w[removed_var], 1e-16);
+                            let s_unused_new = proposal_weights.unused_weight(&out.dims);
                             // Model B prior ratio: log F(D_new) - log F(D_old)
                             let log_prior_old = crate::aug::log_unordered_subset_prior(&t.dims, &weights.w);
                             let log_prior_new = crate::aug::log_unordered_subset_prior(&out.dims, &weights.w);
@@ -414,11 +492,11 @@ pub(crate) fn propose(
             #[cfg(feature = "experimental")]
             let (incoming, log_structure_ratio) = match &prior.weights {
                 Some(weights) => {
-                    let incoming = weights.draw_unused(&t.dims, rng);
+                    let proposal_weights = prior.proposal_weights.as_ref().unwrap_or(weights);
+                    let (incoming, s_unused_old) = proposal_weights.draw_unused(&t.dims, rng);
                     let old_var = t.dims[removed];
-                    let s_old = f64::max(weights.w[old_var], 1e-16);
-                    let s_new = f64::max(weights.w[incoming], 1e-16);
-                    let s_unused_old = weights.unused_weight(&t.dims);
+                    let s_old = f64::max(proposal_weights.w[old_var], 1e-16);
+                    let s_new = f64::max(proposal_weights.w[incoming], 1e-16);
                     // Model B prior ratio: log F(D_new) - log F(D_old)
                     let log_prior_old = crate::aug::log_unordered_subset_prior(&t.dims, &weights.w);
                     let mut new_dims = t.dims.to_vec();
@@ -520,8 +598,8 @@ mod tests {
             let w = InclusionWeights::new(&[1.0, 0.0, 2.0]).unwrap();
             let mut rng = chain_rng(5);
             for _ in 0..200 {
-                assert_ne!(w.draw_unused(&[], &mut rng), 1);
-                assert_eq!(w.draw_unused(&[2], &mut rng), 0);
+                assert_ne!(w.draw_unused(&[], &mut rng).0, 1);
+                assert_eq!(w.draw_unused(&[2], &mut rng).0, 0);
             }
             assert!(w.has_positive_unused(&[0]));
             assert!(!w.has_positive_unused(&[0, 2]));

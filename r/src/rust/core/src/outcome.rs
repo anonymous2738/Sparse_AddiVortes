@@ -54,6 +54,8 @@ pub(crate) enum RequiredData {
     Continuous,
     Binary,
     #[cfg(feature = "experimental")]
+    Categorical,
+    #[cfg(feature = "experimental")]
     Ordinal,
 }
 

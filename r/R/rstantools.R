@@ -90,6 +90,26 @@ replicate_draws.thiessen_probit <- function(outcome, state, design) {
 }
 
 #' @export
+replicate_draws.thiessen_categorical <- function(outcome, state, design) {
+  probabilities <- core_call(core_predict_probs(state, design))
+  draws <- core_call(core_posterior_draws(state))
+  n_draws <- if (length(draws$df) > 0L) {
+    length(draws$df)
+  } else {
+    nrow(core_call(core_predict_draws(state, design, "latent")))
+  }
+  t(vapply(
+      seq_len(n_draws),
+      function(i) {
+        apply(probabilities, 1L, function(probability) {
+          which(stats::rmultinom(1L, 1L, probability) == 1L)[[1L]] - 1L
+        })
+      },
+      numeric(nrow(probabilities))
+    ))
+}
+
+#' @export
 replicate_draws.thiessen_ordinal <- function(outcome, state, design) {
   latent <- core_call(core_predict_draws(state, design, "latent"))
   z <- latent + matrix(stats::rnorm(length(latent)), nrow = nrow(latent))

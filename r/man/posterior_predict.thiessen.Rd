@@ -19,17 +19,17 @@ A double matrix, one row per kept draw and one column per row of
 \code{newdata}.
 }
 \description{
-One replicate per kept draw from the fitted family's observation model: the
-mean function of that draw plus a Gaussian residual at the scale of that
-draw under the Gaussian and heteroscedastic models; Bernoulli labels under
-the probit model; category codes, 0 to K - 1, from the latent value against
-the cutpoints of that draw under the ordinal model; a time, the exponential
-of the log-time draw, under the AFT model; the value clipped to the
-censoring limits under the tobit model; the working value under the
-interval-censored model; and a Student-t or Laplace error at the drawn scale
-under those models. The residuals are drawn from R's stream, so
-\link[=set.seed]{set.seed()} governs them; they are not part of the chain
-the core draws.
+One replicate per kept draw from the fitted family's observation model:
+the mean function of that draw plus a Gaussian residual at the scale of
+that draw under the Gaussian and heteroscedastic models; Bernoulli labels
+under the probit model; category codes, 0 to K - 1, from the latent value
+against the cutpoints of that draw under the ordinal model; a time, the
+exponential of the log-time draw, under the AFT model; the value clipped
+to the censoring limits under the tobit model; the working value under
+the interval-censored model; and a Student-t or Laplace error at the
+drawn scale under those models. The residuals are drawn from R's stream,
+so \code{\link[=set.seed]{set.seed()}} governs them; they are not part of the chain the core
+draws.
 }
 \examples{
 n <- 60

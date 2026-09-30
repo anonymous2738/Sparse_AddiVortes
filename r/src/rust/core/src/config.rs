@@ -831,6 +831,19 @@ pub enum Inclusion {
         /// Iterations before Dirichlet adaptation begins
         #[serde(default = "default_dirichlet_warmup")]
         dirichlet_warmup: usize,
+        /// Trailing sweeps of `burn_in` held out as phase 2 (freeze and
+        /// settle): momentum stops adapting `momentum_settle` sweeps
+        /// before `burn_in` ends, so the fixed kernel can run for that
+        /// many sweeps before any draw is kept. Default 0, no settle
+        /// phase (adaptation runs to the end of burn-in).
+        #[serde(default)]
+        momentum_settle: usize,
+        /// Length L of the trailing window of adaptive-phase momentum
+        /// snapshots averaged (and bounded) to give the frozen momentum
+        /// m* at the phase 1 to phase 2 transition. Default 1, the last
+        /// sweep alone.
+        #[serde(default = "default_momentum_window")]
+        momentum_window: usize,
     },
 }
 
@@ -852,6 +865,11 @@ fn default_tau() -> f64 {
 #[cfg(feature = "experimental")]
 fn default_dirichlet_warmup() -> usize {
     1000
+}
+
+#[cfg(feature = "experimental")]
+fn default_momentum_window() -> usize {
+    1
 }
 
 #[cfg(feature = "experimental")]
@@ -1744,7 +1762,19 @@ fn validate_term(slot: &str, params: &TermParams) -> Result<()> {
                 return Err(invalid(&name, "at least one weight must be positive"));
             }
         }
-        Inclusion::Dart { alpha, a_alpha, b_alpha, adapt_boost, adapt_penalty, momentum_decay, kappa, tau, dirichlet_warmup: _ } => {
+        Inclusion::Dart {
+            alpha,
+            a_alpha,
+            b_alpha,
+            adapt_boost,
+            adapt_penalty,
+            momentum_decay,
+            kappa,
+            tau,
+            dirichlet_warmup: _,
+            momentum_settle: _,
+            momentum_window,
+        } => {
             positive(&format!("{slot}.structure.inclusion.alpha"), *alpha)?;
             positive(&format!("{slot}.structure.inclusion.a_alpha"), *a_alpha)?;
             positive(&format!("{slot}.structure.inclusion.b_alpha"), *b_alpha)?;
@@ -1762,6 +1792,9 @@ fn validate_term(slot: &str, params: &TermParams) -> Result<()> {
             }
             if *tau <= 0.0 {
                 return Err(invalid(&format!("{slot}.structure.inclusion.tau"), "must be positive"));
+            }
+            if *momentum_window == 0 {
+                return Err(invalid(&format!("{slot}.structure.inclusion.momentum_window"), "must be at least 1"));
             }
         }
     }

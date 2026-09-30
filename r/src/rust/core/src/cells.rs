@@ -81,6 +81,9 @@ pub(crate) struct Context<'a> {
 pub(crate) trait CellFamily: sealed::Sealed {
     type Stats: Stats;
 
+    /// Whether a structural proposal may contain an empty cell.
+    fn permits_empty_cells(&self) -> bool;
+
     /// The observation's partial from the caller's input, the ensemble
     /// total and the tessellation's own current value at the observation.
     fn partial(&self, input: f64, total: f64, own: f64) -> f64;
@@ -212,6 +215,10 @@ impl Stats for GaussianStats {
 
 impl CellFamily for GaussianCells {
     type Stats = GaussianStats;
+
+    fn permits_empty_cells(&self) -> bool {
+        false
+    }
 
     fn partial(&self, input: f64, total: f64, own: f64) -> f64 {
         input - total + own
@@ -534,6 +541,10 @@ impl InverseGammaCells {
 
 impl CellFamily for InverseGammaCells {
     type Stats = InverseGammaStats;
+
+    fn permits_empty_cells(&self) -> bool {
+        false
+    }
 
     fn partial(&self, _input: f64, total: f64, own: f64) -> f64 {
         total / own

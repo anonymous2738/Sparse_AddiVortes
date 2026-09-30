@@ -277,7 +277,9 @@ weighted_inclusion <- function(weights) {
 #' concentration theta is drawn on a grid with lambda = theta / (theta +
 #' rho) under a Beta(a, b) prior. The sampled weights and concentration
 #' are carried by [posterior::as_draws_df()] as `inclusion_weight[j]` and
-#' `concentration`.
+#' `concentration`; under adaptive momentum (`adapt_boost` or
+#' `adapt_penalty` above zero) the per-covariate momentum is carried as
+#' `momentum[j]`.
 #'
 #' @inheritSection experimental_outcomes Experimental
 #' @param a Beta shape a of the concentration prior. Default 0.5.
@@ -307,7 +309,8 @@ weighted_inclusion <- function(weights) {
 dart_inclusion <- function(a_alpha = 0.5, b_alpha = 1, alpha = 1,
                            adapt_boost = 0.0, adapt_penalty = 0.0,
                            momentum_decay = 0.0, kappa = 0.6, tau = 50.0,
-                           dirichlet_warmup = 1000) {
+                           dirichlet_warmup = 1000,
+                           momentum_settle = 0, momentum_window = 1) {
   lifecycle::signal_stage("experimental", "dart_inclusion()")
   check_number(a_alpha, min = 0)
   check_number(b_alpha, min = 0)
@@ -318,6 +321,8 @@ dart_inclusion <- function(a_alpha = 0.5, b_alpha = 1, alpha = 1,
   check_number(kappa, min = 0)
   check_number(tau, min = 0)
   check_whole_number(dirichlet_warmup, min = 0)
+  check_whole_number(momentum_settle, min = 0)
+  check_whole_number(momentum_window, min = 1)
   fields <- list(
     a_alpha = a_alpha,
     b_alpha = b_alpha,
@@ -327,7 +332,9 @@ dart_inclusion <- function(a_alpha = 0.5, b_alpha = 1, alpha = 1,
     momentum_decay = momentum_decay,
     kappa = kappa,
     tau = tau,
-    dirichlet_warmup = as.integer(dirichlet_warmup)
+    dirichlet_warmup = as.integer(dirichlet_warmup),
+    momentum_settle = as.integer(momentum_settle),
+    momentum_window = as.integer(momentum_window)
   )
   new_option("dart", fields, "inclusion")
 }

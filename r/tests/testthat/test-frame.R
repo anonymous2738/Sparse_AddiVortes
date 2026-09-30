@@ -115,11 +115,12 @@ test_that("a two-level factor response becomes 0 and 1", {
   expect_true(all(fitted(fit) >= 0 & fitted(fit) <= 1))
 })
 
-test_that("a factor response of more than two levels is refused", {
+test_that("an unordered factor response of more than two levels is rejected", {
   frame <- frame_fixture()
 
   expect_error(
     thiessen(g ~ a + b, frame, small_control(), seed = 1, chains = 1),
+    "Unordered factor responses with more than two levels are not supported",
     class = "thiessen_error"
   )
 })

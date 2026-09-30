@@ -53,14 +53,14 @@ test_that("a Surv of another type is rejected by name", {
   )
 })
 
-test_that("a factor of more than two unordered levels is rejected", {
+test_that("a factor of more than two unordered levels is unsupported", {
   fixture <- small_fixture()
   n <- nrow(fixture$x)
   y <- factor(c("a", "b", "c")[(seq_len(n) %% 3) + 1])
 
   expect_error(
     thiessen(fixture$x, y, small_control(), seed = 1, chains = 1),
-    "ordered",
+    "Unordered factor responses with more than two levels are not supported",
     class = "thiessen_error"
   )
 })

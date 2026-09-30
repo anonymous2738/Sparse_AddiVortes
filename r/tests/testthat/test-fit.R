@@ -12,6 +12,21 @@ test_that("a fit reports its dimensions and schedule", {
   expect_equal(residuals(fit), fixture$y - fitted(fit))
 })
 
+test_that("xtest returns predictions without creating a fitted model", {
+  fixture <- small_fixture()
+  expected <- thiessen(
+    fixture$x, fixture$y, small_control(), seed = 1, chains = 1
+  )
+  actual <- thiessen(
+    fixture$x, fixture$y, small_control(), seed = 1, chains = 1,
+    xtest = fixture$x
+  )
+
+  expect_type(actual, "double")
+  expect_length(actual, nrow(fixture$x))
+  expect_equal(actual, predict(expected, fixture$x))
+})
+
 test_that("the resolved configuration is on the fit", {
   fixture <- small_fixture()
 

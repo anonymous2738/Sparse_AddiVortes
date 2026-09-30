@@ -170,8 +170,12 @@ core_call <- function(expr, call = rlang::caller_env()) {
 fit_state <- function(object, call = rlang::caller_env()) {
   state <- object$state
   if (!core_state_is_live(state$handle)) {
+    payload <- state$payload
+    if (isTRUE(state$payload_compressed)) {
+      payload <- memDecompress(payload, type = "gzip")
+    }
     state$handle <- core_call(
-      core_state_restore(state$payload, fit_threads(object)),
+      core_state_restore(payload, fit_threads(object)),
       call = call
     )
   }

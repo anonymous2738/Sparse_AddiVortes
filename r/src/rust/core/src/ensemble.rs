@@ -130,12 +130,22 @@ impl<F: CellFamily> Ensemble<F> {
         &self.total
     }
 
-    /// One sweep: every tessellation in turn through [`backfit`](Self::backfit).
-    /// Replace the inclusion weights of the structural prior; the DART
-    /// update writes the sampled vector here each sweep.
     #[cfg(feature = "experimental")]
-    pub(crate) fn set_inclusion_weights(&mut self, weights: crate::moves::InclusionWeights) {
-        self.prior.weights = Some(weights);
+    pub(crate) fn update_inclusion_weights(&mut self, weights: &[f64]) {
+        if let Some(current) = &mut self.prior.weights {
+            current.replace(weights);
+        } else {
+            self.prior.weights = Some(crate::moves::InclusionWeights::sampled(weights.to_vec()));
+        }
+    }
+
+    #[cfg(feature = "experimental")]
+    pub(crate) fn update_proposal_weights(&mut self, weights: &[f64]) {
+        if let Some(current) = &mut self.prior.proposal_weights {
+            current.replace(weights);
+        } else {
+            self.prior.proposal_weights = Some(crate::moves::InclusionWeights::sampled(weights.to_vec()));
+        }
     }
 
     /// The cell of every training row under each tessellation.
@@ -219,7 +229,7 @@ impl<F: CellFamily> Ensemble<F> {
     }
 
     /// The backfitting update of tessellation `j`: the partials against the
-    /// rest of the ensemble, one structural move with the empty-cell guard,
+    /// rest of the ensemble, one structural move,
     /// under soft membership one bandwidth move, the cell values, and the
     /// running total.
     #[allow(clippy::too_many_arguments)]
@@ -264,11 +274,12 @@ impl<F: CellFamily> Ensemble<F> {
             },
             &mut scratch.proposed,
         );
-        // A proposal leaving a cell empty is rejected before the acceptance
-        // draw, so no uniform is consumed.
-        if scratch.proposed.all_occupied() {
-            #[allow(unused_mut)]
-            let mut log_alpha = self.family.log_marginal(
+        let mut log_alpha = -1e10;
+        let evaluate_proposal =
+            self.family.permits_empty_cells() || scratch.proposed.all_occupied();
+        
+        if evaluate_proposal {
+            log_alpha = self.family.log_marginal(
                 &scratch.proposed,
                 #[cfg(test)]
                 breakage,
@@ -290,38 +301,56 @@ impl<F: CellFamily> Ensemble<F> {
                 );
             }
             debug_assert!(!log_alpha.is_nan());
-            let u = rng::uniform(rng);
-            let accepted = maths::ln(u) < log_alpha;
+        }
 
-            #[cfg(feature = "experimental")]
-            if let Some(dart) = dart {
-                if iter > dart.dirichlet_warmup {
-                    let t = (iter - dart.dirichlet_warmup + 1) as f64;
-                    let adaptation_scale = ((1.0 + dart.tau) / (t + dart.tau)).powf(dart.kappa);
-                    let current_boost = dart.adapt_boost * adaptation_scale;
-                    let current_penalty = dart.adapt_penalty * adaptation_scale;
-                    let acceptance_prob = log_alpha.min(0.0).exp();
+        #[cfg(feature = "experimental")]
+        if let Some(dart) = dart {
+            // AddCentre/RemoveCentre/Change never touch a dimension, so
+            // `added`/`removed` are always `None` for them; skip the
+            // pow()/exp() work below entirely for those move kinds
+            // instead of computing it and discarding the result.
+            let moves_a_dimension = matches!(
+                m,
+                crate::moves::Move::AddDimension
+                    | crate::moves::Move::RemoveDimension
+                    | crate::moves::Move::Swap
+            );
+            // Past burn-in, momentum only decays (below): growing it
+            // further would keep drifting the proposal throughout the
+            // kept draws instead of settling into a stable mixing regime.
+            if iter > dart.dirichlet_warmup && iter <= dart.burn_in.saturating_sub(dart.momentum_settle) && moves_a_dimension {
+                let t = (iter - dart.dirichlet_warmup) as f64;
+                let adaptation_scale = ((1.0 + dart.tau) / (t + dart.tau)).powf(dart.kappa);
+                let current_boost = dart.adapt_boost * adaptation_scale;
+                let current_penalty = dart.adapt_penalty * adaptation_scale;
+                let acceptance_prob = log_alpha.min(0.0).exp();
 
-                    let added = match m {
-                        crate::moves::Move::AddDimension => scratch.tessellation.dims().iter().copied().find(|&d| !current.dims().contains(&d)),
-                        crate::moves::Move::Swap => scratch.tessellation.dims().iter().copied().find(|&d| !current.dims().contains(&d)),
-                        _ => None,
-                    };
-
-                    let removed = match m {
-                        crate::moves::Move::RemoveDimension => current.dims().iter().copied().find(|&d| !scratch.tessellation.dims().contains(&d)),
-                        crate::moves::Move::Swap => current.dims().iter().copied().find(|&d| !scratch.tessellation.dims().contains(&d)),
-                        _ => None,
-                    };
-
-                    if let Some(dim) = added {
-                        dart.momentum[dim] += current_boost * acceptance_prob;
+                let added = match m {
+                    crate::moves::Move::AddDimension | crate::moves::Move::Swap => {
+                        scratch.tessellation.dims().iter().copied().find(|&d| !current.dims().contains(&d))
                     }
-                    if let Some(dim) = removed {
-                        dart.momentum[dim] += current_boost * (1.0 - acceptance_prob) - current_penalty * acceptance_prob;
+                    _ => None,
+                };
+
+                let removed = match m {
+                    crate::moves::Move::RemoveDimension | crate::moves::Move::Swap => {
+                        current.dims().iter().copied().find(|&d| !scratch.tessellation.dims().contains(&d))
                     }
+                    _ => None,
+                };
+
+                if let Some(dim) = added {
+                    dart.momentum[dim] += current_boost * acceptance_prob;
+                }
+                if let Some(dim) = removed {
+                    dart.momentum[dim] += current_boost * (1.0 - acceptance_prob) - current_penalty * acceptance_prob;
                 }
             }
+        }
+
+        if evaluate_proposal {
+            let u = rng::uniform(rng);
+            let accepted = maths::ln(u) < log_alpha;
 
             if accepted {
                 std::mem::swap(&mut self.tessellations[j], &mut scratch.tessellation);

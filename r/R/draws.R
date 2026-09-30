@@ -7,7 +7,8 @@
 #' standard deviation where the model has one, `cell_count` and
 #' `dimension_count` the mean cells and mean active covariates per mean
 #' tessellation, and, where the model samples them, `df`, `cutpoint[k]`,
-#' `bandwidth[j]`, `inclusion_weight[j]` and `concentration`.
+#' `bandwidth[j]`, `inclusion_weight[j]`, `concentration` and
+#' `momentum[j]`.
 #'
 #' @param object An object of class `"thiessen"`.
 #' @return A double matrix, one row per kept draw.
@@ -30,7 +31,7 @@ draws_matrix_of <- function(object) {
   if (length(extras$df) > 0L) {
     blocks$df <- matrix(extras$df, ncol = 1L, dimnames = list(NULL, "df"))
   }
-  for (name in c("cutpoint", "bandwidth", "inclusion_weight")) {
+  for (name in c("cutpoint", "bandwidth", "inclusion_weight", "momentum")) {
     draws <- extras[[name]]
     if (ncol(draws) > 0L) {
       colnames(draws) <- paste0(name, "[", seq_len(ncol(draws)), "]")
@@ -73,7 +74,8 @@ chain_array <- function(draws, chains) {
 #' grid; `cutpoint[k]`, the interior cutpoints of the ordinal model;
 #' `bandwidth[j]`, the soft-membership bandwidth of tessellation j;
 #' `inclusion_weight[j]` and `concentration`, the DART inclusion weight of
-#' covariate j and the Dirichlet concentration.
+#' covariate j and the Dirichlet concentration; and `momentum[j]`, the
+#' adaptive-DART momentum of covariate j.
 #'
 #' The chain dimension holds the chains of the fit. A fit of one chain has
 #' one chain, and `posterior::summarise_draws()` then reports R-hat as `NA`;

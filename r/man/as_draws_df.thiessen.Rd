@@ -28,7 +28,8 @@ the fit has them: \code{df}, the error degrees of freedom under a Student-t
 grid; \code{cutpoint[k]}, the interior cutpoints of the ordinal model;
 \code{bandwidth[j]}, the soft-membership bandwidth of tessellation j;
 \code{inclusion_weight[j]} and \code{concentration}, the DART inclusion weight of
-covariate j and the Dirichlet concentration.
+covariate j and the Dirichlet concentration; adaptive DART also keeps
+\code{momentum[j]}.
 }
 \details{
 The chain dimension holds the chains of the fit. A fit of one chain has

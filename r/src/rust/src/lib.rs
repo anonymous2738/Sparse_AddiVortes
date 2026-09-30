@@ -283,8 +283,9 @@ fn core_sigma(state: ExternalPtr<FittedHandle>) -> Result<Vec<f64>> {
 
 /// The per-draw quantities the experimental models sample: the error
 /// degrees of freedom, the interior cutpoints, the soft-membership
-/// bandwidths, the DART inclusion weights and their concentration. Each
-/// is empty under a model that does not sample it.
+/// bandwidths, the DART inclusion weights and their concentration, and
+/// the adaptive-DART momentum. Each is empty under a model that does
+/// not sample it.
 #[extendr]
 fn core_posterior_draws(state: ExternalPtr<FittedHandle>) -> Result<List> {
     let fitted = &state.inner;
@@ -293,7 +294,8 @@ fn core_posterior_draws(state: ExternalPtr<FittedHandle>) -> Result<List> {
         cutpoint = draw_matrix(fitted.cutpoint_draws()),
         bandwidth = draw_matrix(&fitted.bandwidth_draws()),
         inclusion_weight = draw_matrix(fitted.inclusion_weight_draws()),
-        concentration = fitted.concentration_draws().to_vec()
+        concentration = fitted.concentration_draws().to_vec(),
+        momentum = draw_matrix(fitted.momentum_draws())
     ))
 }
 
@@ -464,6 +466,55 @@ fn core_samplers_advance(
     Ok(())
 }
 
+/// Advance every sampler and average its current prediction at `x` after
+/// each retained draw, without keeping posterior tessellations or state.
+#[extendr]
+fn core_samplers_predict(
+    samplers: List,
+    x: RMatrix<f64>,
+    burn_in: i32,
+    draws: i32,
+    thinning: i32,
+    threads: i32,
+) -> Result<Vec<f64>> {
+    let data = design(&x)?;
+    let handles = samplers
+        .values()
+        .map(ExternalPtr::<SamplerHandle>::try_from)
+        .collect::<Result<Vec<_>>>()?;
+    let mut guards: Vec<_> = handles
+        .iter()
+        .map(|handle| handle.inner.borrow_mut())
+        .collect();
+    let mut live = guards
+        .iter_mut()
+        .map(|guard| guard.as_mut().ok_or_else(finished))
+        .collect::<Result<Vec<_>>>()?;
+    let chain_sums = thiessen::Sampler::prediction_sums_all(
+        &mut live,
+        &data,
+        burn_in.max(0) as usize,
+        draws.max(0) as usize,
+        thinning.max(0) as usize,
+        threads.max(1) as usize,
+    )
+    .map_err(core_error)?;
+    let mut sums = vec![0.0; data.n_rows()];
+    let total_draws = chain_sums.len() * draws.max(0) as usize;
+    for chain_sum in chain_sums {
+        for (sum, value) in sums.iter_mut().zip(chain_sum) {
+            *sum += value;
+        }
+    }
+    if total_draws == 0 {
+        return Err(Error::Other("draws must be positive".to_string()));
+    }
+    for sum in &mut sums {
+        *sum /= total_draws as f64;
+    }
+    Ok(sums)
+}
+
 /// Record the current state as a posterior draw.
 #[extendr]
 fn core_sampler_keep(sampler: ExternalPtr<SamplerHandle>) -> Result<()> {
@@ -588,6 +639,7 @@ extendr_module! {
     fn core_sampler_new_interval_censored;
     fn core_sampler_step;
     fn core_samplers_advance;
+    fn core_samplers_predict;
     fn core_sampler_keep;
     fn core_sampler_n_kept;
     fn core_sampler_set_response;
