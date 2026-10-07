@@ -19,7 +19,7 @@ test_that("xtest returns predictions without creating a fitted model", {
   )
   actual <- thiessen(
     fixture$x, fixture$y, small_control(), seed = 1, chains = 1,
-    xtest = fixture$x
+    threads = 2, xtest = fixture$x
   )
 
   expect_type(actual, "double")

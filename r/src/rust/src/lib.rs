@@ -311,6 +311,35 @@ fn core_diagnostics(state: ExternalPtr<FittedHandle>) -> Result<List> {
     ))
 }
 
+/// Per-draw counts of the mean tessellations using each covariate.
+#[extendr]
+fn core_inclusion_counts(state: ExternalPtr<FittedHandle>) -> Result<RMatrix<i32>> {
+    let fitted = &state.inner;
+    let counts = fitted.inclusion_counts();
+    let p = fitted.scaler().n_cols();
+    Ok(RMatrix::new_matrix(counts.len(), p, |row, col| counts[row][col]))
+}
+
+/// Per-draw mean tessellation counts, grouped by active dimension.
+#[extendr]
+fn core_dimension_histograms(state: ExternalPtr<FittedHandle>) -> Result<RMatrix<i32>> {
+    let fitted = &state.inner;
+    let counts = fitted.dimension_histograms();
+    let p = fitted.scaler().n_cols();
+    Ok(RMatrix::new_matrix(counts.len(), p, |row, col| counts[row][col]))
+}
+
+/// Per-draw counts used by the DART inclusion update.
+#[extendr]
+fn core_augmented_counts(state: ExternalPtr<FittedHandle>) -> Result<RMatrix<f64>> {
+    let fitted = &state.inner;
+    let counts = fitted.augmented_counts();
+    if counts.is_empty() {
+        return Ok(RMatrix::new_matrix(0, fitted.scaler().n_cols(), |_, _| 0.0));
+    }
+    Ok(draw_matrix(counts))
+}
+
 /// A live sampler over the core's Gibbs loop, held behind an external
 /// pointer. `finish` consumes the state; every later call errors.
 struct SamplerHandle {
@@ -585,6 +614,22 @@ fn core_finish(samplers: List, threads: i32) -> Result<List> {
     let first = handles
         .first()
         .ok_or_else(|| Error::Other("a fit needs at least one chain".to_string()))?;
+    let p = first.data.n_cols();
+    let mut momentum_rows = Vec::new();
+    for (chain, handle) in handles.iter().enumerate() {
+        if let Some((iterations, snapshots)) = handle.live()?.momentum_trace() {
+            for (&iteration, snapshot) in iterations.iter().zip(snapshots) {
+                let mut row = Vec::with_capacity(p + 2);
+                row.push((chain + 1) as f64);
+                row.push(iteration as f64);
+                row.extend_from_slice(snapshot);
+                momentum_rows.push(row);
+            }
+        }
+    }
+    let momentum_trace = RMatrix::new_matrix(momentum_rows.len(), p + 2, |row, col| {
+        momentum_rows[row][col]
+    });
     // The in-sample fit is measured against the response the core reports,
     // the observed values under the models whose working response is
     // replaced by latents.
@@ -606,6 +651,7 @@ fn core_finish(samplers: List, threads: i32) -> Result<List> {
         in_sample_rmse = fitted.in_sample_rmse(),
         warnings = warnings,
         fitted_values = fitted_values,
+        momentum_trace = momentum_trace,
         y = y,
         state = ExternalPtr::new(FittedHandle { inner: fitted })
     ))
@@ -634,6 +680,9 @@ extendr_module! {
     fn core_predict_probs;
     fn core_posterior_draws;
     fn core_diagnostics;
+    fn core_inclusion_counts;
+    fn core_dimension_histograms;
+    fn core_augmented_counts;
     fn core_sampler_new;
     fn core_sampler_new_aft;
     fn core_sampler_new_interval_censored;

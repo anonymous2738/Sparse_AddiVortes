@@ -316,19 +316,53 @@ new_fit <- function(design, response, control, seed, chains, threads, call,
 #' @noRd
 run_prediction_schedule <- function(control, design, response, xtest, seed,
                                     chains, threads) {
+  schedule <- control$general_params
+  updates <- progress_updates(control, chains)
+  report <- progressr::progressor(steps = updates, auto_finish = FALSE)
+  sweeps <- schedule$burn_in + schedule$draws * schedule$thinning
+  emitted <- 0L
+  gap <- function(completed) {
+    ceiling((emitted + 1L) * sweeps / updates) - completed
+  }
+  tick <- function(completed) {
+    while (emitted < updates &&
+             (emitted + 1L) * sweeps <= completed * updates) {
+      emitted <<- emitted + 1L
+      report()
+    }
+  }
+  report(amount = 0, class = "sticky",
+         message = sweep_message(chains, threads))
   samplers <- lapply(seq_len(chains) - 1L, function(chain) {
     new_sampler_handle(config_json(control), design, response, seed, chain)
   })
-  core_call(
-    .Call(
-      "wrap__core_samplers_predict",
-      samplers, xtest,
-      as.integer(control$general_params$burn_in),
-      as.integer(control$general_params$draws),
-      as.integer(control$general_params$thinning), threads,
-      PACKAGE = "thiessen"
+  completed <- 0L
+  while (completed < schedule$burn_in) {
+    run <- max(1L, min(schedule$burn_in - completed, gap(completed)))
+    core_samplers_advance(samplers, as.integer(run), 0L,
+                          as.integer(schedule$thinning), threads)
+    completed <- completed + run
+    tick(completed)
+  }
+  predictions <- numeric(nrow(xtest))
+  kept <- 0L
+  while (kept < schedule$draws) {
+    run <- max(1L, min(schedule$draws - kept,
+                       ceiling(gap(completed) / schedule$thinning)))
+    prediction <- core_call(
+      .Call(
+        "wrap__core_samplers_predict",
+        samplers, xtest, 0L, as.integer(run),
+        as.integer(schedule$thinning), threads,
+        PACKAGE = "thiessen"
+      )
     )
-  )
+    predictions <- predictions + prediction * run
+    kept <- kept + run
+    completed <- completed + run * schedule$thinning
+    tick(completed)
+  }
+  predictions / schedule$draws
 }
 
 #' Run the sweep schedule of every chain and pool the draws
@@ -437,6 +471,14 @@ assemble_fit <- function(fit, design, response, seed, call, threads = 1L,
   state$handle <- fit$state
   state$payload <- core_call(core_state_payload(fit$state), call = call_env)
   report(amount = phase_steps[["saving"]])
+  momentum_trace <- fit$momentum_trace
+  colnames(momentum_trace) <- c(
+    "chain", "iteration",
+    paste0("momentum[", seq_len(ncol(momentum_trace) - 2L), "]")
+  )
+  momentum_trace <- as.data.frame(momentum_trace)
+  momentum_trace$chain <- as.integer(momentum_trace$chain)
+  momentum_trace$iteration <- as.integer(momentum_trace$iteration)
   fit_object <- structure(
     list(
       state = state,
@@ -449,6 +491,7 @@ assemble_fit <- function(fit, design, response, seed, call, threads = 1L,
       n_draws = fit$n_draws,
       in_sample_rmse = fit$in_sample_rmse,
       warnings = fit$warnings,
+      momentum_trace = momentum_trace,
       seed = seed,
       n_features = ncol(design),
       blueprint = blueprint,

@@ -344,9 +344,9 @@ pub(crate) fn select(t: &Tessellation, prior: &Prior, rng: &mut Rng) -> Move {
 }
 
 /// The change a proposed tessellation makes to the assignment and
-/// ln[prior ratio x proposal ratio] excluding the selection ratio. Cell
-/// means in the proposal are placeholders; the sampler redraws every mean
-/// after accept or reject.
+/// ln[structure prior ratio x within-move proposal ratio], excluding the
+/// weighted subset prior and the selection ratio. Cell means in the proposal
+/// are placeholders; the sampler redraws every mean after accept or reject.
 pub(crate) struct Proposal {
     pub delta: Delta,
     pub log_structure_ratio: f64,
@@ -397,18 +397,12 @@ pub(crate) fn propose(
                     let proposal_weights = prior.proposal_weights.as_ref().unwrap_or(weights);
                     let (incoming, s_unused_old) = proposal_weights.draw_unused(&t.dims, rng);
                     let s_new = f64::max(proposal_weights.w[incoming], 1e-16);
-                    // Model B prior ratio: log F(D_new) - log F(D_old)
-                    let log_prior_old = crate::aug::log_unordered_subset_prior(&t.dims, &weights.w);
-                    let mut new_dims = t.dims.to_vec();
-                    new_dims.push(incoming);
-                    let log_prior_new = crate::aug::log_unordered_subset_prior(&new_dims, &weights.w);
-                    let log_prior_ratio = log_prior_new - log_prior_old;
                     // Proposal ratio: reverse is uniform removal 1/(d+1),
                     // forward is weighted pick s_new / S_unused_old
                     let log_q_ratio = -maths::ln((d + 1) as f64)
                         + maths::ln(s_unused_old)
                         - maths::ln(s_new);
-                    (incoming, prior.log_dim_count_ratio(d + 1) + log_prior_ratio + log_q_ratio)
+                    (incoming, prior.log_dim_count_ratio(d + 1) + log_q_ratio)
                 }
                 None => (
                     unused_column(&t.dims, prior.p, uniform_index(prior.p - d, rng)),
@@ -452,16 +446,12 @@ pub(crate) fn propose(
                             let proposal_weights = prior.proposal_weights.as_ref().unwrap_or(weights);
                             let s_old = f64::max(proposal_weights.w[removed_var], 1e-16);
                             let s_unused_new = proposal_weights.unused_weight(&out.dims);
-                            // Model B prior ratio: log F(D_new) - log F(D_old)
-                            let log_prior_old = crate::aug::log_unordered_subset_prior(&t.dims, &weights.w);
-                            let log_prior_new = crate::aug::log_unordered_subset_prior(&out.dims, &weights.w);
-                            let log_prior_ratio = log_prior_new - log_prior_old;
                             // Proposal ratio: forward is uniform removal 1/d,
                             // reverse is weighted pick s_old / S_unused_new
                             let log_q_ratio = maths::ln(s_old)
                                 - maths::ln(s_unused_new)
                                 + maths::ln(d as f64);
-                            -prior.log_dim_count_ratio(d) + log_prior_ratio + log_q_ratio
+                            -prior.log_dim_count_ratio(d) + log_q_ratio
                         }
                         None => -prior.log_dim_count_ratio(d),
                     }
@@ -497,12 +487,6 @@ pub(crate) fn propose(
                     let old_var = t.dims[removed];
                     let s_old = f64::max(proposal_weights.w[old_var], 1e-16);
                     let s_new = f64::max(proposal_weights.w[incoming], 1e-16);
-                    // Model B prior ratio: log F(D_new) - log F(D_old)
-                    let log_prior_old = crate::aug::log_unordered_subset_prior(&t.dims, &weights.w);
-                    let mut new_dims = t.dims.to_vec();
-                    new_dims[removed] = incoming;
-                    let log_prior_new = crate::aug::log_unordered_subset_prior(&new_dims, &weights.w);
-                    let log_prior_ratio = log_prior_new - log_prior_old;
                     // S_unused_new = S_unused_old - s_new + s_old
                     let s_unused_new = s_unused_old - s_new + s_old;
                     // Proposal ratio: forward picks incoming with s_new/S_unused_old,
@@ -511,7 +495,7 @@ pub(crate) fn propose(
                         - maths::ln(s_unused_new)
                         - maths::ln(s_new)
                         + maths::ln(s_unused_old);
-                    (incoming, log_prior_ratio + log_q_ratio)
+                    (incoming, log_q_ratio)
                 }
                 None => (
                     unused_column(&t.dims, prior.p, uniform_index(prior.p - d, rng)),
@@ -554,6 +538,34 @@ pub(crate) fn propose_owned(
     let mut out = Tessellation::empty();
     let proposal = propose(m, t, prior, rng, &mut out);
     (out, proposal)
+}
+
+/// The weighted subset-prior log ratio for a structural proposal.
+/// `approximate` selects the cheap delayed-acceptance screen; the accepted
+/// proposal must still be corrected with the exact ratio.
+#[cfg(feature = "experimental")]
+pub(crate) fn log_subset_prior_ratio(
+    current: &Tessellation,
+    proposed: &Tessellation,
+    prior: &Prior,
+    approximate: bool,
+) -> f64 {
+    let Some(weights) = &prior.weights else {
+        return 0.0;
+    };
+    if current.dims() == proposed.dims() {
+        return 0.0;
+    }
+    if approximate {
+        crate::aug::log_unordered_subset_prior_approx(proposed.dims(), &weights.w)
+            - crate::aug::log_unordered_subset_prior_approx(current.dims(), &weights.w)
+    } else {
+        crate::aug::log_unordered_subset_prior_ratio(
+            current.dims(),
+            proposed.dims(),
+            &weights.w,
+        )
+    }
 }
 
 /// ln q(reverse | proposed) - ln q(move | current).

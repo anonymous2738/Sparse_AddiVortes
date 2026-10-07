@@ -831,6 +831,10 @@ pub enum Inclusion {
         /// Iterations before Dirichlet adaptation begins
         #[serde(default = "default_dirichlet_warmup")]
         dirichlet_warmup: usize,
+        /// Additional sweeps after Dirichlet adaptation begins before
+        /// momentum adaptation starts. Default 0 preserves the old schedule.
+        #[serde(default)]
+        momentum_warmup: usize,
         /// Trailing sweeps of `burn_in` held out as phase 2 (freeze and
         /// settle): momentum stops adapting `momentum_settle` sweeps
         /// before `burn_in` ends, so the fixed kernel can run for that
@@ -844,6 +848,10 @@ pub enum Inclusion {
         /// sweep alone.
         #[serde(default = "default_momentum_window")]
         momentum_window: usize,
+        /// Record adaptive momentum every N sweeps after Dirichlet warmup;
+        /// zero disables the trace.
+        #[serde(default)]
+        momentum_trace_every: usize,
     },
 }
 
@@ -1772,8 +1780,10 @@ fn validate_term(slot: &str, params: &TermParams) -> Result<()> {
             kappa,
             tau,
             dirichlet_warmup: _,
+            momentum_warmup: _,
             momentum_settle: _,
             momentum_window,
+            momentum_trace_every: _,
         } => {
             positive(&format!("{slot}.structure.inclusion.alpha"), *alpha)?;
             positive(&format!("{slot}.structure.inclusion.a_alpha"), *a_alpha)?;

@@ -70,6 +70,17 @@ test_that("a fit shorter than a hundred sweeps signals one per sweep", {
   expect_identical(sweep_updates(seen), 30L)
 })
 
+test_that("xtest reports progress across its prediction schedule", {
+  fixture <- small_fixture()
+
+  seen <- progressions(thiessen(
+    fixture$x, fixture$y, small_control(), seed = 1, chains = 1,
+    xtest = fixture$x
+  ))
+
+  expect_identical(total_advance(seen), progress_updates(small_control()))
+})
+
 test_that("the sweeps of every chain are reported", {
   fixture <- small_fixture()
 

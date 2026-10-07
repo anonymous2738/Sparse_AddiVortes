@@ -18,6 +18,9 @@ use crate::tessellation::{Assignment, Tessellation};
 /// ln tau.
 const BANDWIDTH_STEP: f64 = 0.5;
 
+#[cfg(feature = "experimental")]
+const DELAYED_ACCEPTANCE_DIMENSION_THRESHOLD: usize = 8;
+
 /// The tessellations of one cell family and their running total at the
 /// training rows.
 #[derive(Debug, Clone)]
@@ -160,7 +163,7 @@ impl<F: CellFamily> Ensemble<F> {
         weights: &[f64],
         rng: &mut Rng,
         #[cfg(feature = "experimental")] dart: &mut Option<crate::sampler::Dart>,
-        #[cfg(feature = "experimental")] iter: usize,
+        #[cfg(feature = "experimental")] adaptation_scale: Option<f64>,
         #[cfg(test)] breakage: crate::broken::Breakage,
     ) {
         let mut scratch = std::mem::take(&mut self.scratch);
@@ -175,7 +178,7 @@ impl<F: CellFamily> Ensemble<F> {
                 #[cfg(feature = "experimental")]
                 dart,
                 #[cfg(feature = "experimental")]
-                iter,
+                adaptation_scale,
                 #[cfg(test)]
                 breakage,
             );
@@ -242,7 +245,7 @@ impl<F: CellFamily> Ensemble<F> {
         weights: &[f64],
         rng: &mut Rng,
         #[cfg(feature = "experimental")] dart: &mut Option<crate::sampler::Dart>,
-        #[cfg(feature = "experimental")] iter: usize,
+        #[cfg(feature = "experimental")] adaptation_scale: Option<f64>,
         #[cfg(test)] breakage: crate::broken::Breakage,
     ) {
         let tau = self.tessellations[j].tau;
@@ -277,7 +280,21 @@ impl<F: CellFamily> Ensemble<F> {
         let mut log_alpha = -1e10;
         let evaluate_proposal =
             self.family.permits_empty_cells() || scratch.proposed.all_occupied();
-        
+        #[cfg(feature = "experimental")]
+        let delayed_acceptance = self.prior.weights.is_some()
+            && matches!(
+                m,
+                crate::moves::Move::AddDimension
+                    | crate::moves::Move::RemoveDimension
+                    | crate::moves::Move::Swap
+            )
+            && current
+                .n_dims()
+                .max(scratch.tessellation.n_dims())
+                > DELAYED_ACCEPTANCE_DIMENSION_THRESHOLD;
+        #[cfg(feature = "experimental")]
+        let mut stage_one_log_alpha = -1e10;
+
         if evaluate_proposal {
             log_alpha = self.family.log_marginal(
                 &scratch.proposed,
@@ -300,11 +317,24 @@ impl<F: CellFamily> Ensemble<F> {
                     self.family.cell_normaliser(),
                 );
             }
+            #[cfg(feature = "experimental")]
+            {
+                let subset_prior_ratio = moves::log_subset_prior_ratio(
+                    current,
+                    &scratch.tessellation,
+                    &self.prior,
+                    delayed_acceptance,
+                );
+                stage_one_log_alpha = log_alpha + subset_prior_ratio;
+                if !delayed_acceptance {
+                    log_alpha = stage_one_log_alpha;
+                }
+            }
             debug_assert!(!log_alpha.is_nan());
         }
 
         #[cfg(feature = "experimental")]
-        if let Some(dart) = dart {
+        if let (Some(dart), Some(adaptation_scale)) = (dart.as_mut(), adaptation_scale) {
             // AddCentre/RemoveCentre/Change never touch a dimension, so
             // `added`/`removed` are always `None` for them; skip the
             // pow()/exp() work below entirely for those move kinds
@@ -318,12 +348,12 @@ impl<F: CellFamily> Ensemble<F> {
             // Past burn-in, momentum only decays (below): growing it
             // further would keep drifting the proposal throughout the
             // kept draws instead of settling into a stable mixing regime.
-            if iter > dart.dirichlet_warmup && iter <= dart.burn_in.saturating_sub(dart.momentum_settle) && moves_a_dimension {
-                let t = (iter - dart.dirichlet_warmup) as f64;
-                let adaptation_scale = ((1.0 + dart.tau) / (t + dart.tau)).powf(dart.kappa);
+            if moves_a_dimension {
                 let current_boost = dart.adapt_boost * adaptation_scale;
                 let current_penalty = dart.adapt_penalty * adaptation_scale;
-                let acceptance_prob = log_alpha.min(0.0).exp();
+                // Keep this proposal-only heuristic cheap for screened moves;
+                // the exact target correction is applied at the MH decision.
+                let acceptance_prob = stage_one_log_alpha.min(0.0).exp();
 
                 let added = match m {
                     crate::moves::Move::AddDimension | crate::moves::Move::Swap => {
@@ -349,8 +379,32 @@ impl<F: CellFamily> Ensemble<F> {
         }
 
         if evaluate_proposal {
-            let u = rng::uniform(rng);
-            let accepted = maths::ln(u) < log_alpha;
+            let accepted = {
+                #[cfg(feature = "experimental")]
+                {
+                    if delayed_acceptance {
+                        if maths::ln(rng::uniform(rng)) < stage_one_log_alpha.min(0.0) {
+                            let exact_subset_prior_ratio = moves::log_subset_prior_ratio(
+                                current,
+                                &scratch.tessellation,
+                                &self.prior,
+                                false,
+                            );
+                            let exact_log_alpha = log_alpha + exact_subset_prior_ratio;
+                            maths::ln(rng::uniform(rng))
+                                < (exact_log_alpha - stage_one_log_alpha).min(0.0)
+                        } else {
+                            false
+                        }
+                    } else {
+                        maths::ln(rng::uniform(rng)) < log_alpha
+                    }
+                }
+                #[cfg(not(feature = "experimental"))]
+                {
+                    maths::ln(rng::uniform(rng)) < log_alpha
+                }
+            };
 
             if accepted {
                 std::mem::swap(&mut self.tessellations[j], &mut scratch.tessellation);

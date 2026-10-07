@@ -43,6 +43,102 @@ thiessen_diagnostics <- function(object) {
   out
 }
 
+#' Recorded adaptive momentum during warmup
+#'
+#' Returns the optional momentum snapshots requested with
+#' `dart_inclusion(momentum_trace_every = ...)`. Snapshots begin after
+#' `dirichlet_warmup` and are not posterior draws. A value of zero disables
+#' recording and returns a zero-row data frame.
+#'
+#' @param object An object of class `"thiessen"`.
+#' @return A data frame with `chain`, `iteration`, and one `momentum[j]`
+#'   column per predictor.
+#' @export
+thiessen_momentum_trace <- function(object) {
+  check_fit(object)
+  object$momentum_trace
+}
+
+#' Per-draw covariate inclusion counts
+#'
+#' Counts how many mean tessellations use each covariate in every kept
+#' draw. Counts are derived on demand from the retained posterior, so
+#' requesting them does not add work to the sampler.
+#'
+#' @param object An object of class "thiessen".
+#' @return An integer matrix, one row per kept draw and one column per
+#'   covariate. Rows are in chain order, matching
+#'   [posterior::as_draws_matrix()].
+#' @export
+thiessen_inclusion_counts <- function(object) {
+  check_fit(object)
+  counts <- core_call(core_inclusion_counts(fit_state(object)))
+  predictor_names <- colnames(object$x)
+  if (is.null(predictor_names)) {
+    predictor_names <- paste0("x", seq_len(ncol(counts)))
+  }
+  colnames(counts) <- predictor_names
+  counts
+}
+
+#' Per-draw histogram of tessellation dimensions
+#'
+#' Counts the mean tessellations with each number of active covariates in
+#' every kept draw.
+#'
+#' @param object An object of class "thiessen".
+#' @return An integer matrix, one row per kept draw and one column per
+#'   dimension from one through the number of predictors.
+#' @export
+thiessen_dimension_histograms <- function(object) {
+  check_fit(object)
+  histograms <- core_call(core_dimension_histograms(fit_state(object)))
+  colnames(histograms) <- paste0("dimension_", seq_len(ncol(histograms)))
+  histograms
+}
+
+#' Per-draw covariate counts used by the DART update
+#'
+#' Includes the latent augmentation counts after the DART warmup, as well
+#' as the dimensions present in the fitted tessellations.
+#'
+#' @param object An object of class "thiessen".
+#' @return A numeric matrix, one row per kept draw and one column per
+#'   predictor; zero rows under inclusion priors other than DART.
+#' @export
+thiessen_augmented_counts <- function(object) {
+  check_fit(object)
+  counts <- core_call(core_augmented_counts(fit_state(object)))
+  predictor_names <- colnames(object$x)
+  if (is.null(predictor_names)) {
+    predictor_names <- paste0("x", seq_len(ncol(counts)))
+  }
+  colnames(counts) <- predictor_names
+  counts
+}
+
+#' Stored Dirichlet-adaptive posterior draws
+#'
+#' Returns the posterior quantities recorded for the DART inclusion prior
+#' without calculating the fitted mean at every training row.
+#'
+#' @param object An object of class "thiessen".
+#' @return A list with `concentration`, `inclusion_weight`, and `momentum`.
+#'   The latter two are matrices with one row per kept draw and one column
+#'   per covariate.
+#' @export
+thiessen_dart_draws <- function(object) {
+  check_fit(object)
+  draws <- core_call(core_posterior_draws(fit_state(object)))
+  predictor_names <- colnames(object$x)
+  if (is.null(predictor_names)) {
+    predictor_names <- paste0("x", seq_len(ncol(draws$inclusion_weight)))
+  }
+  colnames(draws$inclusion_weight) <- predictor_names
+  colnames(draws$momentum) <- predictor_names
+  draws[c("concentration", "inclusion_weight", "momentum")]
+}
+
 #' Variable inclusion proportions of a fitted model
 #'
 #' The share of the active dimensions of the mean tessellations falling on

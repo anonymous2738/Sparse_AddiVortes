@@ -106,6 +106,12 @@ impl VectorEnsemble {
             );
             let log_alpha = proposed_log - current_log
                 + proposal.log_structure_ratio
+                + moves::log_subset_prior_ratio(
+                    current,
+                    &proposal_tessellation,
+                    &self.prior,
+                    false,
+                )
                 + moves::log_selection_ratio(
                     selected,
                     current,

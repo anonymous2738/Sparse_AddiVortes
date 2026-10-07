@@ -42,6 +42,8 @@ pub struct Posterior {
     concentration: Vec<f64>,
     #[serde(skip_serializing_if = "Vec::is_empty", default)]
     momentum: Vec<Vec<f64>>,
+    #[serde(skip_serializing_if = "Vec::is_empty", default)]
+    augmented_counts: Vec<Vec<f64>>,
 }
 
 impl Posterior {
@@ -55,6 +57,7 @@ impl Posterior {
             inclusion_weights: Vec::new(),
             concentration: Vec::new(),
             momentum: Vec::new(),
+            augmented_counts: Vec::new(),
         }
     }
 
@@ -67,6 +70,7 @@ impl Posterior {
         df: Option<f64>,
         inclusion: Option<(Vec<f64>, f64)>,
         momentum: Option<Vec<f64>>,
+        augmented_counts: Option<Vec<f64>>,
     ) {
         self.sigma_sq.extend(sigma_sq);
         self.tessellations.push(tessellations);
@@ -79,6 +83,9 @@ impl Posterior {
         }
         if let Some(momentum) = momentum {
             self.momentum.push(momentum);
+        }
+        if let Some(counts) = augmented_counts {
+            self.augmented_counts.push(counts);
         }
     }
 
@@ -136,6 +143,11 @@ impl Posterior {
         &self.momentum
     }
 
+    /// Counts used by the DART inclusion update, one row per kept draw.
+    pub fn augmented_counts(&self) -> &[Vec<f64>] {
+        &self.augmented_counts
+    }
+
     pub(crate) fn extend(&mut self, other: &Self) {
         self.sigma_sq.extend_from_slice(&other.sigma_sq);
         self.tessellations.extend_from_slice(&other.tessellations);
@@ -147,6 +159,8 @@ impl Posterior {
             .extend_from_slice(&other.inclusion_weights);
         self.concentration.extend_from_slice(&other.concentration);
         self.momentum.extend_from_slice(&other.momentum);
+        self.augmented_counts
+            .extend_from_slice(&other.augmented_counts);
     }
 }
 
@@ -166,6 +180,8 @@ struct PosteriorParts {
     concentration: Vec<f64>,
     #[serde(default)]
     momentum: Vec<Vec<f64>>,
+    #[serde(default)]
+    augmented_counts: Vec<Vec<f64>>,
 }
 
 impl TryFrom<PosteriorParts> for Posterior {
@@ -184,6 +200,7 @@ impl TryFrom<PosteriorParts> for Posterior {
             inclusion_weights,
             concentration,
             momentum,
+            augmented_counts,
         } = parts;
         let tessellations = tessellation_draws(tessellations)?;
         let variance_tessellations = tessellation_draws(variance_tessellations)?;
@@ -295,6 +312,24 @@ impl TryFrom<PosteriorParts> for Posterior {
                 return Err(bad("momentum values must be finite"));
             }
         }
+        if !(augmented_counts.is_empty() || augmented_counts.len() == n_draws) {
+            return Err(bad("augmented counts must be absent or one set per draw"));
+        }
+        if let Some(first) = augmented_counts.first() {
+            let p = first.len();
+            if p == 0 || augmented_counts.iter().any(|counts| counts.len() != p) {
+                return Err(bad(
+                    "every draw must hold the same positive number of augmented counts",
+                ));
+            }
+            if augmented_counts
+                .iter()
+                .flatten()
+                .any(|count| !(count.is_finite() && *count >= 0.0))
+            {
+                return Err(bad("augmented counts must be finite and non-negative"));
+            }
+        }
         Ok(Self {
             sigma_sq,
             tessellations,
@@ -304,6 +339,7 @@ impl TryFrom<PosteriorParts> for Posterior {
             inclusion_weights,
             concentration,
             momentum,
+            augmented_counts,
         })
     }
 }
@@ -1662,6 +1698,51 @@ impl Fitted {
             .iter()
             .map(|draw| draw.iter().map(|t| t.n_dims() as f64).sum::<f64>() / draw.len() as f64)
             .collect()
+    }
+
+    /// Number of mean tessellations of each active dimension, one row per
+    /// kept draw and one column for each dimension from one through p.
+    pub fn dimension_histograms(&self) -> Vec<Vec<i32>> {
+        let p = self.scaler.n_cols();
+        self.posterior
+            .tessellations()
+            .iter()
+            .map(|draw| {
+                let mut counts = vec![0; p];
+                for tessellation in draw {
+                    let dimensions = tessellation.n_dims();
+                    if dimensions > 0 {
+                        counts[dimensions - 1] += 1;
+                    }
+                }
+                counts
+            })
+            .collect()
+    }
+
+    /// Number of mean tessellations using each covariate, one row per
+    /// kept draw. Computed on demand from the retained tessellations.
+    pub fn inclusion_counts(&self) -> Vec<Vec<i32>> {
+        let p = self.scaler.n_cols();
+        self.posterior
+            .tessellations()
+            .iter()
+            .map(|draw| {
+                let mut counts = vec![0; p];
+                for tessellation in draw {
+                    for &dimension in tessellation.dims() {
+                        counts[dimension] += 1;
+                    }
+                }
+                counts
+            })
+            .collect()
+    }
+
+    /// Counts used by the DART inclusion update, one row per kept draw;
+    /// empty under other inclusion priors.
+    pub fn augmented_counts(&self) -> &[Vec<f64>] {
+        self.posterior.augmented_counts()
     }
 
     /// Share of active mean-tessellation dimensions over all kept draws

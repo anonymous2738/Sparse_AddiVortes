@@ -86,6 +86,18 @@ core_diagnostics <- function(state) {
   .Call(wrap__core_diagnostics, state)
 }
 
+core_inclusion_counts <- function(state) {
+  .Call(wrap__core_inclusion_counts, state)
+}
+
+core_dimension_histograms <- function(state) {
+  .Call(wrap__core_dimension_histograms, state)
+}
+
+core_augmented_counts <- function(state) {
+  .Call(wrap__core_augmented_counts, state)
+}
+
 core_sampler_new <- function(config_json, x, y, seed_value, chain) {
   .Call(wrap__core_sampler_new, config_json, x, y, seed_value, chain)
 }

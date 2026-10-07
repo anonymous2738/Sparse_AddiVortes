@@ -300,6 +300,11 @@ weighted_inclusion <- function(weights) {
 #' @param alpha Initial Dirichlet concentration. Default 1, matching the
 #'   upstream AddiVortes implementation. The Gamma prior parameters
 #'   [a_alpha] and [b_alpha] govern subsequent concentration updates.
+#' @param momentum_warmup Additional sweeps after `dirichlet_warmup` before
+#'   momentum adaptation starts. Default 0 preserves the existing timing.
+#' @param momentum_trace_every Record momentum every this many sweeps after
+#'   momentum adaptation starts; zero disables the trace. Larger values use
+#'   less memory.
 #'
 #' @seealso [structure_params()], [weighted_inclusion()],
 #'   [core_experimental()]
@@ -310,7 +315,9 @@ dart_inclusion <- function(a_alpha = 0.5, b_alpha = 1, alpha = 1,
                            adapt_boost = 0.0, adapt_penalty = 0.0,
                            momentum_decay = 0.0, kappa = 0.6, tau = 50.0,
                            dirichlet_warmup = 1000,
-                           momentum_settle = 0, momentum_window = 1) {
+                           momentum_warmup = 0, momentum_settle = 0,
+                           momentum_window = 1,
+                           momentum_trace_every = 0) {
   lifecycle::signal_stage("experimental", "dart_inclusion()")
   check_number(a_alpha, min = 0)
   check_number(b_alpha, min = 0)
@@ -321,8 +328,10 @@ dart_inclusion <- function(a_alpha = 0.5, b_alpha = 1, alpha = 1,
   check_number(kappa, min = 0)
   check_number(tau, min = 0)
   check_whole_number(dirichlet_warmup, min = 0)
+  check_whole_number(momentum_warmup, min = 0)
   check_whole_number(momentum_settle, min = 0)
   check_whole_number(momentum_window, min = 1)
+  check_whole_number(momentum_trace_every, min = 0)
   fields <- list(
     a_alpha = a_alpha,
     b_alpha = b_alpha,
@@ -333,8 +342,10 @@ dart_inclusion <- function(a_alpha = 0.5, b_alpha = 1, alpha = 1,
     kappa = kappa,
     tau = tau,
     dirichlet_warmup = as.integer(dirichlet_warmup),
+    momentum_warmup = as.integer(momentum_warmup),
     momentum_settle = as.integer(momentum_settle),
-    momentum_window = as.integer(momentum_window)
+    momentum_window = as.integer(momentum_window),
+    momentum_trace_every = as.integer(momentum_trace_every)
   )
   new_option("dart", fields, "inclusion")
 }

@@ -13,13 +13,24 @@ dart_inclusion(
   momentum_decay = 0,
   kappa = 0.6,
   tau = 50,
-  dirichlet_warmup = 1000
+  dirichlet_warmup = 1000,
+  momentum_warmup = 0,
+  momentum_settle = 0,
+  momentum_window = 1,
+  momentum_trace_every = 0
 )
 }
 \arguments{
 \item{alpha}{Initial Dirichlet concentration. Default 1, matching the
 upstream AddiVortes implementation. The Gamma prior parameters
 \link{a_alpha} and \link{b_alpha} govern subsequent concentration updates.}
+
+\item{momentum_trace_every}{Record momentum every this many sweeps after
+momentum adaptation starts; zero disables the trace. Larger values use
+less memory.}
+
+\item{momentum_warmup}{Additional sweeps after \code{dirichlet_warmup} before
+momentum adaptation starts. Default 0 preserves the existing timing.}
 
 \item{a}{Beta shape a of the concentration prior. Default 0.5.}
 
