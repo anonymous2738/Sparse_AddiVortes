@@ -11,8 +11,6 @@ dart_inclusion(
   adapt_boost = 0,
   adapt_penalty = 0,
   momentum_decay = 0,
-  kappa = 0.6,
-  tau = 50,
   dirichlet_warmup = 1000,
   momentum_warmup = 0,
   momentum_settle = 0,

@@ -269,11 +269,10 @@ pub(crate) struct Dart {
     pub(crate) proposal_s: Vec<f64>,
     pub(crate) proposal_tilt: Vec<f64>,
     pub(crate) momentum: Vec<f64>,
+    pub(crate) momentum_increment: Vec<f64>,
     pub(crate) adapt_boost: f64,
     pub(crate) adapt_penalty: f64,
     pub(crate) momentum_decay: f64,
-    pub(crate) kappa: f64,
-    pub(crate) tau: f64,
     pub(crate) dirichlet_warmup: usize,
     pub(crate) momentum_warmup: usize,
     /// Sweeps after which momentum stops accumulating (only decays):
@@ -301,7 +300,7 @@ impl Dart {
     /// Dirichlet(theta / p).
     /// uniform for theta, then p gammas.
     #[allow(clippy::too_many_arguments)]
-    fn draw(alpha: f64, a_alpha: f64, b_alpha: f64, adapt_boost: f64, adapt_penalty: f64, momentum_decay: f64, kappa: f64, tau: f64, dirichlet_warmup: usize, momentum_warmup: usize, momentum_settle: usize, momentum_window: usize, momentum_trace_every: usize, burn_in: usize, p: usize) -> Self {
+    fn draw(alpha: f64, a_alpha: f64, b_alpha: f64, adapt_boost: f64, adapt_penalty: f64, momentum_decay: f64, dirichlet_warmup: usize, momentum_warmup: usize, momentum_settle: usize, momentum_window: usize, momentum_trace_every: usize, burn_in: usize, p: usize) -> Self {
         let theta = alpha.max(1e-4);
         // The upstream implementation starts with uniform inclusion weights;
         // the first Dirichlet draw occurs after the warmup period.
@@ -314,11 +313,10 @@ impl Dart {
             proposal_s: vec![1.0 / p as f64; p],
             proposal_tilt: vec![1.0; p],
             momentum: vec![0.0; p],
+            momentum_increment: vec![0.0; p],
             adapt_boost,
             adapt_penalty,
             momentum_decay,
-            kappa,
-            tau,
             dirichlet_warmup,
             momentum_warmup,
             burn_in,
@@ -361,6 +359,32 @@ fn draw_dirichlet_from_counts(
     let inverse_total = 1.0 / total;
     for weight in weights {
         *weight *= inverse_total;
+    }
+}
+
+#[cfg(feature = "experimental")]
+fn apply_momentum_increment(momentum: &mut [f64], increment: &[f64], decay: f64) {
+    debug_assert_eq!(momentum.len(), increment.len());
+    for (momentum, &increment) in momentum.iter_mut().zip(increment) {
+        *momentum = decay * *momentum + increment;
+    }
+}
+
+#[cfg(feature = "experimental")]
+fn augmentation_success_probability(sum_inel: f64, p: usize, adaptive: bool) -> f64 {
+    if adaptive {
+        1.0 - sum_inel.min(1.0 - 1.0 / p as f64)
+    } else {
+        (1.0 - sum_inel).max(1e-5)
+    }
+}
+
+#[cfg(feature = "experimental")]
+fn bound_augmentation_failures(failures: u64, p: usize, adaptive: bool) -> u64 {
+    if adaptive {
+        failures.min((p as u64).saturating_mul(3))
+    } else {
+        failures
     }
 }
 
@@ -820,8 +844,8 @@ impl Sampler {
         let mut rng = rng::chain_rng(seed);
         #[cfg(feature = "experimental")]
         let dart = match &config.mean_params.structure.inclusion {
-            crate::config::Inclusion::Dart { alpha, a_alpha, b_alpha, adapt_boost, adapt_penalty, momentum_decay, kappa, tau, dirichlet_warmup, momentum_warmup, momentum_settle, momentum_window, momentum_trace_every } => {
-                Some(Dart::draw(*alpha, *a_alpha, *b_alpha, *adapt_boost, *adapt_penalty, *momentum_decay, *kappa, *tau, *dirichlet_warmup, *momentum_warmup, *momentum_settle, *momentum_window, *momentum_trace_every, config.general_params.burn_in, p))
+            crate::config::Inclusion::Dart { alpha, a_alpha, b_alpha, adapt_boost, adapt_penalty, momentum_decay, dirichlet_warmup, momentum_warmup, momentum_settle, momentum_window, momentum_trace_every } => {
+                Some(Dart::draw(*alpha, *a_alpha, *b_alpha, *adapt_boost, *adapt_penalty, *momentum_decay, *dirichlet_warmup, *momentum_warmup, *momentum_settle, *momentum_window, *momentum_trace_every, config.general_params.burn_in, p))
             }
             _ => None,
         };
@@ -1052,6 +1076,9 @@ impl Sampler {
         #[cfg(feature = "experimental")]
         {
             self.iter += 1;
+            if let Some(dart) = &mut self.dart {
+                dart.momentum_increment.fill(0.0);
+            }
             self.refresh_proposal_weights();
         }
         #[cfg(feature = "experimental")]
@@ -1060,8 +1087,7 @@ impl Sampler {
             if self.iter > momentum_start
                 && self.iter <= dart.burn_in.saturating_sub(dart.momentum_settle)
             {
-                let t = (self.iter - momentum_start) as f64;
-                Some(((1.0 + dart.tau) / (t + dart.tau)).powf(dart.kappa))
+                Some(1.0)
             } else {
                 None
             }
@@ -1137,6 +1163,7 @@ impl Sampler {
             return;
         };
         let p = dart.s.len();
+        let adaptive_augmentation = dart.adapt_boost > 0.0 || dart.adapt_penalty > 0.0;
         let mut counts = std::mem::take(&mut dart.counts);
         counts.resize(p, 0.0);
         counts.fill(0.0);
@@ -1182,11 +1209,19 @@ impl Sampler {
                 let mut sum_inel = 0.0;
                 for k in 1..d_len {
                     sum_inel += dart.s[latent_order[k - 1]];
-                    let prob_success = (1.0 - sum_inel).max(1e-5);
+                    let prob_success = augmentation_success_probability(
+                        sum_inel,
+                        p,
+                        adaptive_augmentation,
+                    );
                     
                     let u = 1.0 - crate::rng::uniform(&mut self.rng);
                     let raw_failures = crate::maths::ln(u) / crate::maths::ln(1.0 - prob_success);
-                    let failures = raw_failures.floor() as u64;
+                    let failures = bound_augmentation_failures(
+                        raw_failures.floor() as u64,
+                        p,
+                        adaptive_augmentation,
+                    );
                     
                     if failures > 0 {
                         if k == 1 {
@@ -1272,8 +1307,12 @@ impl Sampler {
         if self.iter <= t_adapt {
             let in_window = self.iter > t_adapt.saturating_sub(dart.momentum_window)
                 && self.iter > dart.momentum_start();
+            apply_momentum_increment(
+                &mut dart.momentum,
+                &dart.momentum_increment,
+                dart.momentum_decay,
+            );
             for (i, (momentum, tilt)) in dart.momentum.iter_mut().zip(&mut dart.proposal_tilt).enumerate() {
-                *momentum *= dart.momentum_decay;
                 *tilt = maths::exp(momentum.clamp(-30.0, 30.0));
                 if in_window {
                     dart.momentum_sum[i] += *momentum;
@@ -2166,6 +2205,23 @@ mod tests {
 
     fn small() -> Config {
         Config::new().with_m(10).with_burn_in(20).with_draws(30)
+    }
+
+    #[cfg(feature = "experimental")]
+    #[test]
+    fn momentum_decay_applies_only_to_prior_history() {
+        let mut momentum = [10.0, -4.0];
+        apply_momentum_increment(&mut momentum, &[3.0, 2.0], 0.5);
+        assert_eq!(momentum, [8.0, 0.0]);
+    }
+
+    #[cfg(feature = "experimental")]
+    #[test]
+    fn augmentation_caps_apply_only_to_adaptive_dart() {
+        assert_eq!(augmentation_success_probability(0.999, 10, true), 0.1);
+        assert_eq!(augmentation_success_probability(0.999, 10, false), 0.001);
+        assert_eq!(bound_augmentation_failures(1000, 10, true), 30);
+        assert_eq!(bound_augmentation_failures(1000, 10, false), 1000);
     }
 
     #[test]

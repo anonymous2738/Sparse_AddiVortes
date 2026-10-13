@@ -822,12 +822,6 @@ pub enum Inclusion {
         /// Adaptive momentum decay
         #[serde(default)]
         momentum_decay: f64,
-        /// Adaptation rate parameter
-        #[serde(default = "default_kappa")]
-        kappa: f64,
-        /// Adaptation scale parameter
-        #[serde(default = "default_tau")]
-        tau: f64,
         /// Iterations before Dirichlet adaptation begins
         #[serde(default = "default_dirichlet_warmup")]
         dirichlet_warmup: usize,
@@ -858,16 +852,6 @@ pub enum Inclusion {
 #[cfg(feature = "experimental")]
 fn default_dart_alpha() -> f64 {
     1.0
-}
-
-#[cfg(feature = "experimental")]
-fn default_kappa() -> f64 {
-    0.6
-}
-
-#[cfg(feature = "experimental")]
-fn default_tau() -> f64 {
-    50.0
 }
 
 #[cfg(feature = "experimental")]
@@ -1777,8 +1761,6 @@ fn validate_term(slot: &str, params: &TermParams) -> Result<()> {
             adapt_boost,
             adapt_penalty,
             momentum_decay,
-            kappa,
-            tau,
             dirichlet_warmup: _,
             momentum_warmup: _,
             momentum_settle: _,
@@ -1796,12 +1778,6 @@ fn validate_term(slot: &str, params: &TermParams) -> Result<()> {
             }
             if *momentum_decay < 0.0 || *momentum_decay > 1.0 {
                 return Err(invalid(&format!("{slot}.structure.inclusion.momentum_decay"), "must be in [0, 1]"));
-            }
-            if *kappa <= 0.0 {
-                return Err(invalid(&format!("{slot}.structure.inclusion.kappa"), "must be positive"));
-            }
-            if *tau <= 0.0 {
-                return Err(invalid(&format!("{slot}.structure.inclusion.tau"), "must be positive"));
             }
             if *momentum_window == 0 {
                 return Err(invalid(&format!("{slot}.structure.inclusion.momentum_window"), "must be at least 1"));

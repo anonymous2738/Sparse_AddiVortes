@@ -313,7 +313,7 @@ weighted_inclusion <- function(weights) {
 #' @export
 dart_inclusion <- function(a_alpha = 0.5, b_alpha = 1, alpha = 1,
                            adapt_boost = 0.0, adapt_penalty = 0.0,
-                           momentum_decay = 0.0, kappa = 0.6, tau = 50.0,
+                           momentum_decay = 0.0,
                            dirichlet_warmup = 1000,
                            momentum_warmup = 0, momentum_settle = 0,
                            momentum_window = 1,
@@ -325,8 +325,6 @@ dart_inclusion <- function(a_alpha = 0.5, b_alpha = 1, alpha = 1,
   check_number(adapt_boost, min = 0)
   check_number(adapt_penalty, min = 0)
   check_number(momentum_decay, min = 0, max = 1)
-  check_number(kappa, min = 0)
-  check_number(tau, min = 0)
   check_whole_number(dirichlet_warmup, min = 0)
   check_whole_number(momentum_warmup, min = 0)
   check_whole_number(momentum_settle, min = 0)
@@ -339,8 +337,6 @@ dart_inclusion <- function(a_alpha = 0.5, b_alpha = 1, alpha = 1,
     adapt_boost = adapt_boost,
     adapt_penalty = adapt_penalty,
     momentum_decay = momentum_decay,
-    kappa = kappa,
-    tau = tau,
     dirichlet_warmup = as.integer(dirichlet_warmup),
     momentum_warmup = as.integer(momentum_warmup),
     momentum_settle = as.integer(momentum_settle),

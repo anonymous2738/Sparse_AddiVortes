@@ -370,10 +370,10 @@ impl<F: CellFamily> Ensemble<F> {
                 };
 
                 if let Some(dim) = added {
-                    dart.momentum[dim] += current_boost * acceptance_prob;
+                    dart.momentum_increment[dim] += current_boost * acceptance_prob;
                 }
                 if let Some(dim) = removed {
-                    dart.momentum[dim] += current_boost * (1.0 - acceptance_prob) - current_penalty * acceptance_prob;
+                    dart.momentum_increment[dim] += current_boost * (1.0 - acceptance_prob) - current_penalty * acceptance_prob;
                 }
             }
         }

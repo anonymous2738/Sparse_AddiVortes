@@ -1,5 +1,8 @@
 # thiessen 0.0.0.9000
 
+* `dart_inclusion()` removes the DART adaptation `tau` and `kappa` parameters.
+  Momentum boost and penalty are constant during adaptation; the existing
+  settle window still freezes their updates before sampling draws.
 * `thiessen()` fits the Gaussian, binary probit and heteroscedastic models
   to a numeric matrix, with `thiessen_control()` carrying the configuration
   in the shape the core stores it: an outcome family from
