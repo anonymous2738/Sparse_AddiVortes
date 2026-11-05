@@ -1093,11 +1093,7 @@ gc()
   build_cl <- makeCluster(1L)
   tryCatch(
     parallel::clusterEvalQ(build_cl, {
-      Sys.setenv(THIESSEN_EXPERIMENTAL = "1")
-      devtools::load_all(
-        "/home/jd191252/thiessen/r", recompile = TRUE, quiet = TRUE
-      )
-      stopifnot(core_experimental())
+      library(thiessen)
     }),
     finally = stopCluster(build_cl)
   )
