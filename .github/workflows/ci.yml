@@ -186,7 +186,7 @@ jobs:
         if: steps.kernel.outputs.hit == 'true'
       # A failed gate leaves its rank and sample files for the R
       # evaluation under benchmarks/calibration.
-      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         if: failure()
         with:
           name: calibration-full-report
@@ -343,7 +343,7 @@ jobs:
           baseline=$(ls benchmarks/suite/baselines/*.csv | sort -V | tail -1)
           echo "comparing against $baseline"
           python benchmarks/suite/compare.py --gate "$baseline" scorecard.csv
-      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         if: steps.kernel.outputs.hit == 'true'
         with:
           name: suite-scorecard
@@ -417,7 +417,7 @@ jobs:
         with:
           working-directory: r
       - run: R CMD build r
-      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: r-source
           path: thiessen_*.tar.gz
@@ -475,7 +475,7 @@ jobs:
         env:
           R_LIBS: check/thiessen.Rcheck
       - if: failure()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: r-check-${{ matrix.os }}-${{ matrix.r }}${{ matrix.experimental && '-experimental' || '' }}
           path: check
@@ -522,7 +522,7 @@ jobs:
           target-folder: r
           clean: false
       # A pull request reads the site as an artefact instead.
-      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: r-docs
           path: r/docs
@@ -582,7 +582,7 @@ jobs:
         working-directory: python
       - run: mkdocs build --strict
         working-directory: python
-      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: py-docs
           path: python/site
