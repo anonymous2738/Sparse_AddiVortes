@@ -472,9 +472,13 @@ assemble_fit <- function(fit, design, response, seed, call, threads = 1L,
   state$payload <- core_call(core_state_payload(fit$state), call = call_env)
   report(amount = phase_steps[["saving"]])
   momentum_trace <- fit$momentum_trace
+  predictor_names <- colnames(design)
+  if (is.null(predictor_names)) {
+    predictor_names <- as.character(seq_len(ncol(momentum_trace) - 2L))
+  }
   colnames(momentum_trace) <- c(
     "chain", "iteration",
-    paste0("momentum[", seq_len(ncol(momentum_trace) - 2L), "]")
+    paste0("momentum[", predictor_names, "]")
   )
   momentum_trace <- as.data.frame(momentum_trace)
   momentum_trace$chain <- as.integer(momentum_trace$chain)

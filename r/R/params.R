@@ -300,8 +300,9 @@ weighted_inclusion <- function(weights) {
 #' @param alpha Initial Dirichlet concentration. Default 1, matching the
 #'   upstream AddiVortes implementation. The Gamma prior parameters
 #'   [a_alpha] and [b_alpha] govern subsequent concentration updates.
-#' @param momentum_warmup Additional sweeps after `dirichlet_warmup` before
-#'   momentum adaptation starts. Default 0 preserves the existing timing.
+#' @param momentum_warmup Additional momentum-only sweeps under uniform
+#'   inclusion weights after `dirichlet_warmup`, before Dirichlet adaptation
+#'   begins. Default 0 preserves the existing timing.
 #' @param momentum_trace_every Record momentum every this many sweeps after
 #'   momentum adaptation starts; zero disables the trace. Larger values use
 #'   less memory.

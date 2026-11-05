@@ -825,8 +825,9 @@ pub enum Inclusion {
         /// Iterations before Dirichlet adaptation begins
         #[serde(default = "default_dirichlet_warmup")]
         dirichlet_warmup: usize,
-        /// Additional sweeps after Dirichlet adaptation begins before
-        /// momentum adaptation starts. Default 0 preserves the old schedule.
+        /// Additional momentum-only sweeps under uniform inclusion weights
+        /// after `dirichlet_warmup`, before Dirichlet adaptation begins.
+        /// Default 0 preserves the old schedule.
         #[serde(default)]
         momentum_warmup: usize,
         /// Trailing sweeps of `burn_in` held out as phase 2 (freeze and
@@ -842,7 +843,7 @@ pub enum Inclusion {
         /// sweep alone.
         #[serde(default = "default_momentum_window")]
         momentum_window: usize,
-        /// Record adaptive momentum every N sweeps after Dirichlet warmup;
+        /// Record adaptive momentum every N sweeps after momentum adaptation starts;
         /// zero disables the trace.
         #[serde(default)]
         momentum_trace_every: usize,

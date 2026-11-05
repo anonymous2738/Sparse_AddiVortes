@@ -27,8 +27,9 @@ upstream AddiVortes implementation. The Gamma prior parameters
 momentum adaptation starts; zero disables the trace. Larger values use
 less memory.}
 
-\item{momentum_warmup}{Additional sweeps after \code{dirichlet_warmup} before
-momentum adaptation starts. Default 0 preserves the existing timing.}
+\item{momentum_warmup}{Additional momentum-only sweeps under uniform
+inclusion weights after \code{dirichlet_warmup}, before Dirichlet adaptation
+begins. Default 0 preserves the existing timing.}
 
 \item{a}{Beta shape a of the concentration prior. Default 0.5.}
 

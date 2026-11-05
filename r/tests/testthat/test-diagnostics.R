@@ -67,7 +67,29 @@ test_that("the momentum trace records the requested post-warmup sweeps", {
   expect_true(all(is.finite(as.matrix(trace[3:4]))))
 })
 
-test_that("momentum warmup delays adaptation after Dirichlet warmup", {
+test_that("the momentum trace labels values with predictor names", {
+  skip_if_not(core_experimental())
+  fixture <- small_fixture()
+  colnames(fixture$x) <- c("signal", "noise")
+  inclusion <- dart_inclusion(
+    adapt_boost = 0.5, adapt_penalty = 0.5,
+    dirichlet_warmup = 2, momentum_settle = 2,
+    momentum_trace_every = 3
+  )
+  control <- small_control(mean_params = term_params(
+    structure = structure_params(omega = 1, inclusion = inclusion)
+  ))
+
+  fit <- suppressWarnings(
+    thiessen(fixture$x, fixture$y, control, seed = 1, chains = 1)
+  )
+
+  expect_identical(names(thiessen_momentum_trace(fit)), c(
+    "chain", "iteration", "momentum[signal]", "momentum[noise]"
+  ))
+})
+
+test_that("momentum warmup adapts under uniform weights before Dirichlet", {
   skip_if_not(core_experimental())
   fixture <- small_fixture()
   inclusion <- dart_inclusion(
@@ -82,7 +104,7 @@ test_that("momentum warmup delays adaptation after Dirichlet warmup", {
   fit <- thiessen(fixture$x, fixture$y, control, seed = 1, chains = 1)
   trace <- thiessen_momentum_trace(fit)
 
-  expect_identical(trace$iteration, c(7L, 8L))
+  expect_identical(trace$iteration, c(4L, 6L, 8L))
 })
 
 test_that("momentum tracing is disabled by default", {

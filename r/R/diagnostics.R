@@ -51,12 +51,20 @@ thiessen_diagnostics <- function(object) {
 #' recording and returns a zero-row data frame.
 #'
 #' @param object An object of class `"thiessen"`.
-#' @return A data frame with `chain`, `iteration`, and one `momentum[j]`
-#'   column per predictor.
+#' @return A data frame with `chain`, `iteration`, and one `momentum[name]`
+#'   column per predictor, using input column names or indices when unnamed.
 #' @export
 thiessen_momentum_trace <- function(object) {
   check_fit(object)
-  object$momentum_trace
+  trace <- object$momentum_trace
+  predictor_names <- colnames(object$x)
+  if (is.null(predictor_names)) {
+    predictor_names <- as.character(seq_len(ncol(trace) - 2L))
+  }
+  colnames(trace) <- c(
+    "chain", "iteration", paste0("momentum[", predictor_names, "]")
+  )
+  trace
 }
 
 #' Per-draw covariate inclusion counts

@@ -336,6 +336,10 @@ impl Dart {
     }
 
     fn momentum_start(&self) -> usize {
+        self.dirichlet_warmup
+    }
+
+    fn dirichlet_start(&self) -> usize {
         self.dirichlet_warmup.saturating_add(self.momentum_warmup)
     }
 }
@@ -371,21 +375,15 @@ fn apply_momentum_increment(momentum: &mut [f64], increment: &[f64], decay: f64)
 }
 
 #[cfg(feature = "experimental")]
-fn augmentation_success_probability(sum_inel: f64, p: usize, adaptive: bool) -> f64 {
-    if adaptive {
-        1.0 - sum_inel.min(1.0 - 1.0 / p as f64)
-    } else {
-        (1.0 - sum_inel).max(1e-5)
-    }
+fn augmentation_success_probability(sum_inel: f64, adaptive: bool) -> f64 {
+    let floor = if adaptive { 1e-3 } else { 1e-5 };
+    (1.0 - sum_inel).max(floor)
 }
 
 #[cfg(feature = "experimental")]
-fn bound_augmentation_failures(failures: u64, p: usize, adaptive: bool) -> u64 {
-    if adaptive {
-        failures.min((p as u64).saturating_mul(3))
-    } else {
-        failures
-    }
+fn augmentation_failures(sum_inel: f64, uniform: f64, adaptive: bool) -> u64 {
+    let probability = augmentation_success_probability(sum_inel, adaptive);
+    (maths::ln(uniform) / maths::ln(1.0 - probability)).floor() as u64
 }
 
 /// The extra data channel of a gated outcome, alongside the response.
@@ -1184,7 +1182,7 @@ impl Sampler {
             dim_lists.push(dims);
         }
 
-        if self.iter > dart.dirichlet_warmup {
+        if self.iter > dart.dirichlet_start() {
             let mut probs_buf = std::mem::take(&mut dart.augmentation_probabilities);
             let mut allocation_buf = std::mem::take(&mut dart.augmentation_allocation);
             let mut order_workspace = std::mem::take(&mut dart.order_workspace);
@@ -1209,19 +1207,8 @@ impl Sampler {
                 let mut sum_inel = 0.0;
                 for k in 1..d_len {
                     sum_inel += dart.s[latent_order[k - 1]];
-                    let prob_success = augmentation_success_probability(
-                        sum_inel,
-                        p,
-                        adaptive_augmentation,
-                    );
-                    
                     let u = 1.0 - crate::rng::uniform(&mut self.rng);
-                    let raw_failures = crate::maths::ln(u) / crate::maths::ln(1.0 - prob_success);
-                    let failures = bound_augmentation_failures(
-                        raw_failures.floor() as u64,
-                        p,
-                        adaptive_augmentation,
-                    );
+                    let failures = augmentation_failures(sum_inel, u, adaptive_augmentation);
                     
                     if failures > 0 {
                         if k == 1 {
@@ -2217,11 +2204,10 @@ mod tests {
 
     #[cfg(feature = "experimental")]
     #[test]
-    fn augmentation_caps_apply_only_to_adaptive_dart() {
-        assert_eq!(augmentation_success_probability(0.999, 10, true), 0.1);
-        assert_eq!(augmentation_success_probability(0.999, 10, false), 0.001);
-        assert_eq!(bound_augmentation_failures(1000, 10, true), 30);
-        assert_eq!(bound_augmentation_failures(1000, 10, false), 1000);
+    fn adaptive_augmentation_count_is_uncapped_with_probability_floor() {
+        assert_eq!(augmentation_success_probability(1.0, true), 1e-3);
+        assert_eq!(augmentation_success_probability(1.0, false), 1e-5);
+        assert!(augmentation_failures(1.0, 0.5, true) > 30);
     }
 
     #[test]
