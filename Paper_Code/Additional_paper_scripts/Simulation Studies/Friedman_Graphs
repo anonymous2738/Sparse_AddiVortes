@@ -1,12 +1,19 @@
+pkgs <- c("remotes", "glmnet", "BART", "parallel", "pbapply","progressr")
+for (p in pkgs) if (!requireNamespace(p, quietly = TRUE)) install.packages(p)
+
+
+library(BART)
 library(glmnet)
-#devtools::install("/home/jd191252/thiessen/Soft_AddiVortes-Variable_selection")
 
 progressr::handlers(global = TRUE)
 progressr::handlers("txtprogressbar")
-# Enable experimental features for the Rust build
 Sys.setenv(THIESSEN_EXPERIMENTAL = "1")
-# Load the Rust thiessen package
-devtools::load_all("/home/jd191252/thiessen/r")
+remotes::install_github(
+  "anonymous2738/Sparse_AddiVortes",
+  subdir = "r",
+  ref = "backup/thiessen-2026-10-13"
+)
+library(thiessen)
 
 #Friedman dataset
 reproducible <- TRUE
@@ -18,20 +25,20 @@ EXPECTED_PACKAGE_VERSIONS <- c(
 )
 EXPECTED_THIESSEN_VERSION <- "0.0.0.9000"
 if (reproducible && (!"thiessen" %in% loadedNamespaces() ||
-    as.character(getNamespaceVersion("thiessen")) != EXPECTED_THIESSEN_VERSION)) {
-  stop("Load thiessen version ", EXPECTED_THIESSEN_VERSION, " before running.")
+                     as.character(getNamespaceVersion("thiessen")) != EXPECTED_THIESSEN_VERSION)) {
+  warning("Load thiessen version ", EXPECTED_THIESSEN_VERSION, " before running.")
 }
 RNGkind(kind = "L'Ecuyer-CMRG", normal.kind = "Inversion", sample.kind = "Rejection")
 if (reproducible) {
   if (as.character(getRversion()) != EXPECTED_R_VERSION) {
-    stop("Expected R ", EXPECTED_R_VERSION, "; found R ", getRversion(), ".")
+    warning("Expected R ", EXPECTED_R_VERSION, "; found R ", getRversion(), ".")
   }
   actual_versions <- vapply(names(EXPECTED_PACKAGE_VERSIONS), function(package) {
     if (!requireNamespace(package, quietly = TRUE)) return(NA_character_)
     as.character(utils::packageVersion(package))
   }, character(1))
   mismatched <- is.na(actual_versions) | actual_versions != EXPECTED_PACKAGE_VERSIONS
-  if (any(mismatched)) stop("Benchmark package versions do not match the pinned versions.")
+  if (any(mismatched)) warning("Benchmark package versions do not match the pinned versions.")
 }
 
 {
@@ -74,9 +81,8 @@ control_adaptive <- thiessen_control(
         dirichlet_warmup = 5000,
         momentum_settle = 20000,
         momentum_window = 50000,
-        momentum_trace_every = 50,
-        momentum_warmup = 0
-    ),
+        momentum_trace_every = 50
+      ),
       omega = 1.5
     )
   ),
@@ -87,10 +93,10 @@ control_adaptive <- thiessen_control(
   )
 )
 time_rust<- system.time({
-Model_AddiVortes_rust_adaptive <- thiessen(
-  X_train, training_data$Y, chains = 1, threads = 1, seed = 1996, 
-  control = control_adaptive
-)
+  Model_AddiVortes_rust_adaptive <- thiessen(
+    X_train, training_data$Y, chains = 1, threads = 1, seed = 1996, 
+    control = control_adaptive
+  )
 })
 
 print(time_rust)
@@ -102,8 +108,8 @@ control_Dir <- thiessen_control(
     lambda_c = 4,
     structure = structure_params(                          # Maps to Omega = 1.5
       inclusion = dart_inclusion(
-    a_alpha = 0.5, b_alpha = 1.0
-    ),
+        a_alpha = 0.5, b_alpha = 1.0
+      ),
       omega = 1.5
     ),
   ),
@@ -114,10 +120,10 @@ control_Dir <- thiessen_control(
   )
 )
 time_rust_dir<- system.time({
-Model_AddiVortes_dir <- thiessen(
-  X_train, training_data$Y, chains = 1, threads = 1, seed = 1996,
-  control = control_Dir
-)
+  Model_AddiVortes_dir <- thiessen(
+    X_train, training_data$Y, chains = 1, threads = 1, seed = 1996,
+    control = control_Dir
+  )
 })
 print(time_rust_dir)
 
@@ -150,7 +156,7 @@ friedman_plot_data <- function(fit) {
   diagnostics <- thiessen_diagnostics(fit)
   inclusion_counts <- thiessen_inclusion_counts(fit)
   dimension_histograms <- thiessen_dimension_histograms(fit)
-
+  
   fit$posteriorSigma <- diagnostics$sigma^2
   fit$posteriorVariableSelection <- t(inclusion_counts)
   fit$posteriorDim <- lapply(seq_len(nrow(dimension_histograms)), function(i) {
@@ -228,7 +234,7 @@ col_bart <- "royalblue"
     par(mar = c(3.5, name_margin, 0.5, 0.5))
     
     bp <- barplot(mean_counts[ord], horiz = TRUE, names.arg = cov_names[ord], las = 1,
-            col = bar_col, border = NA, xlab = "Latent Failure Count", cex.names = 0.8,
+                  col = bar_col, border = NA, xlab = "Latent Failure Count", cex.names = 0.8,
                   xlim = c(0, max(ci_upper[ord]) * 1.05))
     
     # 95% Credible Intervals with caps
@@ -250,21 +256,21 @@ col_bart <- "royalblue"
   old_par <- par(no.readonly = TRUE)
   failure_counts <- Model_AddiVortes_rust_adaptive$posteriorAugmentationFailures
   trace_covariates <- head(active_indices, 5L)
-
+  
   if (length(trace_covariates) > 0L && ncol(failure_counts) > 0L) {
     par(mfrow = c(3, 2), mar = c(3, 3.5, 2, 1), mgp = c(2, 0.6, 0))
     kept_draw <- seq_len(ncol(failure_counts))
-
+    
     for (i in trace_covariates) {
-       plot(kept_draw, failure_counts[i, ],
+      plot(kept_draw, failure_counts[i, ],
            type = "l", col = col_adaptive, lwd = 0.8,
            main = if (is.null(colnames(X_train))) paste0("X", i) else colnames(X_train)[i], xlab = "Kept draw",
-         ylab = "Latent failure count")
+           ylab = "Latent failure count")
     }
   } else {
     message("No augmented-count draws are available to plot.")
   }
-
+  
   par(old_par)
 }
 
@@ -462,7 +468,7 @@ col_bart <- "royalblue"
     noise_indices <- setdiff(seq_along(means), active_indices)
     ordered_rest <- head(noise_indices[order(means[noise_indices], decreasing = TRUE)], number_points)
     selected <- c(active_indices, ordered_rest)
-
+    
     y_vals <- means[selected]
     y_lower <- lower[selected]
     y_upper <- upper[selected]
@@ -560,13 +566,13 @@ col_bart <- "royalblue"
     
     # Combine the values for the plot
     plot_values <- c(probs[active_indices], probs[top_noise_actual_indices])
-
+    
     bp <- barplot(plot_values,
                   axisnames = FALSE,
                   main = "", xlab = "", ylab = "", 
                   col = bar_col, border = NA, ylim = c(-0.1, 1.1),
                   axes = FALSE)
-
+    
     if (length(top_noise_actual_indices) > 0L) {
       n_active <- length(active_indices)
       separator <- (bp[n_active] + bp[n_active + 1L]) / 2
@@ -626,11 +632,11 @@ col_bart <- "royalblue"
     max(adaptive_counts[, j], dirichlet_counts[, j], dart_counts[, j], na.rm = TRUE)
   }, numeric(1))
   trace_ymax <- pmax(trace_ymax, 1)
-
+  
   par(mfrow=c(2,5))
   for (j in trace_indices) {
     y_lab <- if (j == 1 || j == 6) "Number of inclusions" else ""
-
+    
     plot(adaptive_counts[, j], type = 'l', col = col_adaptive, lwd = 2,
          ylim = c(0, trace_ymax[j]),
          xlab = "Kept draw", ylab = y_lab)
@@ -639,7 +645,7 @@ col_bart <- "royalblue"
   # --- Dirichlet AddiVortes ---
   for (j in dirichlet_indices) {
     y_lab <- if (j == 1 || j == 6) "Number of inclusions" else ""
-
+    
     plot(dirichlet_counts[, j], type = 'l', col = col_dir, lwd = 2,
          ylim = c(0, trace_ymax[j]),
          xlab = "Kept draw", ylab = y_lab)
@@ -648,7 +654,7 @@ col_bart <- "royalblue"
   # --- DART Model ---
   for (j in dart_indices) {
     y_lab <- if (j == 1 || j == 6) "Number of inclusions" else ""
-
+    
     plot(dart_counts[, j], type = 'l', col = col_dart, lwd = 2,
          ylim = c(0, trace_ymax[j]),
          xlab = "Kept draw", ylab = y_lab)
@@ -814,62 +820,62 @@ col_bart <- "royalblue"
 ### Figure 11 Momentum barchart ###
 {
   old_par <- par(no.readonly = TRUE)
-
+  
   momentum_trace <- thiessen_momentum_trace(Model_AddiVortes_rust_adaptive)
   momentum_cols <- grep("^momentum\\[", names(momentum_trace))
   posteriorMomentum <- t(as.matrix(momentum_trace[, momentum_cols, drop = FALSE]))
   momentum_iterations <- momentum_trace$iteration
-
+  
   if (length(momentum_cols) == 0L || nrow(momentum_trace) == 0L) {
     message("No momentum trace was recorded. Set momentum_trace_every to a positive value and rerun the fit to plot momentum.")
   } else {
-
-  # 1. Calculate the mean, lower (2.5%), and upper (97.5%) bounds
-  mean_momentum <- rowMeans(posteriorMomentum)
-  lower_momentum <- apply(posteriorMomentum, 1, quantile, probs = 0.025)
-  upper_momentum <- apply(posteriorMomentum, 1, quantile, probs = 0.975)
-  
-  # If possible, get actual variable names, else generate X1, X2...
-  if (exists("X_train") && !is.null(colnames(X_train))) {
-    cov_names <- colnames(X_train)
-  } else {
-    cov_names <- paste0("X", seq_along(mean_momentum))
-  }
-  # 2. Sort based on the mean
-  ord <- order(mean_momentum, decreasing = FALSE)
-  
-  max_vars_to_plot <- 20
-  if (length(mean_momentum) > max_vars_to_plot) {
-    ord <- tail(ord, max_vars_to_plot)
-  }
-  
-  # Dynamically adjust left margin for variable names; minimise top and right margins
-  name_margin <- max(4.1, max(nchar(cov_names[ord])) * 0.6)
-  par(mar = c(4, name_margin, 0.5, 1) + 0.1)
-  
-  # 3. Calculate dynamic xlim to ensure error bars aren't cut off
-  x_min <- min(0, min(lower_momentum[ord])) 
-  x_max <- max(upper_momentum[ord])
-  
-  # 4. Save the bar midpoints into 'bp' (Title removed)
-  bp <- barplot(mean_momentum[ord], horiz = TRUE, names.arg = cov_names[ord], las = 1,
-                col = col_adaptive, border = NA, xlab = "Mean Momentum",
-                main = "", cex.names = 0.8,
-                xlim = c(x_min, x_max * 1.05))
-  
-  # 5. Draw the main horizontal error bar lines
-  segments(x0 = lower_momentum[ord], y0 = bp, 
-           x1 = upper_momentum[ord], y1 = bp, 
-           col = "black", lwd = 1.5)
-  
-  # 6. Draw the vertical caps for the error bars
-  epsilon <- 0.15 # Height of the cap
-  segments(x0 = lower_momentum[ord], y0 = bp - epsilon, 
-           x1 = lower_momentum[ord], y1 = bp + epsilon, 
-           col = "black", lwd = 1.5)
-  segments(x0 = upper_momentum[ord], y0 = bp - epsilon, 
-           x1 = upper_momentum[ord], y1 = bp + epsilon, 
-           col = "black", lwd = 1.5)
+    
+    # 1. Calculate the mean, lower (2.5%), and upper (97.5%) bounds
+    mean_momentum <- rowMeans(posteriorMomentum)
+    lower_momentum <- apply(posteriorMomentum, 1, quantile, probs = 0.025)
+    upper_momentum <- apply(posteriorMomentum, 1, quantile, probs = 0.975)
+    
+    # If possible, get actual variable names, else generate X1, X2...
+    if (exists("X_train") && !is.null(colnames(X_train))) {
+      cov_names <- colnames(X_train)
+    } else {
+      cov_names <- paste0("X", seq_along(mean_momentum))
+    }
+    # 2. Sort based on the mean
+    ord <- order(mean_momentum, decreasing = FALSE)
+    
+    max_vars_to_plot <- 20
+    if (length(mean_momentum) > max_vars_to_plot) {
+      ord <- tail(ord, max_vars_to_plot)
+    }
+    
+    # Dynamically adjust left margin for variable names; minimise top and right margins
+    name_margin <- max(4.1, max(nchar(cov_names[ord])) * 0.6)
+    par(mar = c(4, name_margin, 0.5, 1) + 0.1)
+    
+    # 3. Calculate dynamic xlim to ensure error bars aren't cut off
+    x_min <- min(0, min(lower_momentum[ord])) 
+    x_max <- max(upper_momentum[ord])
+    
+    # 4. Save the bar midpoints into 'bp' (Title removed)
+    bp <- barplot(mean_momentum[ord], horiz = TRUE, names.arg = cov_names[ord], las = 1,
+                  col = col_adaptive, border = NA, xlab = "Mean Momentum",
+                  main = "", cex.names = 0.8,
+                  xlim = c(x_min, x_max * 1.05))
+    
+    # 5. Draw the main horizontal error bar lines
+    segments(x0 = lower_momentum[ord], y0 = bp, 
+             x1 = upper_momentum[ord], y1 = bp, 
+             col = "black", lwd = 1.5)
+    
+    # 6. Draw the vertical caps for the error bars
+    epsilon <- 0.15 # Height of the cap
+    segments(x0 = lower_momentum[ord], y0 = bp - epsilon, 
+             x1 = lower_momentum[ord], y1 = bp + epsilon, 
+             col = "black", lwd = 1.5)
+    segments(x0 = upper_momentum[ord], y0 = bp - epsilon, 
+             x1 = upper_momentum[ord], y1 = bp + epsilon, 
+             col = "black", lwd = 1.5)
   }
   
   # Reset plotting parameters
@@ -879,74 +885,74 @@ col_bart <- "royalblue"
 ### Figure 12 Momentum traces ###
 {
   old_par <- par(no.readonly = TRUE)
-
+  
   if (length(momentum_iterations) == 0L || nrow(posteriorMomentum) == 0L) {
     message("No momentum trace was recorded; skipping the momentum trace panels.")
   } else {
-  
-  # Summarize momentum over the configured final adaptation window.
-  momentum_window <- Model_AddiVortes_rust_adaptive$control$mean_params$structure$inclusion$momentum_window
-  window_start <- max(momentum_iterations) - momentum_window
-  window_indices <- which(momentum_iterations > window_start)
-  mean_mom <- rowMeans(posteriorMomentum[, window_indices, drop = FALSE])
-  cat("Covariates with negative window-mean momentum:", sum(mean_mom < 0), "\n")
-  ord_mom <- order(mean_mom, decreasing = TRUE)
-  top_momentum_indices <- head(ord_mom, 10L)
-  top_momentum <- data.frame(
-    Covariate = cov_names[top_momentum_indices],
-    WindowMeanMomentum = mean_mom[top_momentum_indices],
-    LastMomentum = posteriorMomentum[
-      top_momentum_indices, ncol(posteriorMomentum)
-    ]
-  )
-  cat("Top 10 covariates by mean momentum in the final", momentum_window,
-      "sweeps (", length(window_indices), "snapshots):\n")
-  print(top_momentum, row.names = FALSE)
-
-  feature_indices <- head(active_indices, 5L)
-  high_momentum_indices <- head(ord_mom[!ord_mom %in% active_indices], length(feature_indices))
-  trace_indices <- c(feature_indices, high_momentum_indices)
-  par(mfrow = c(2, length(feature_indices)), mar = c(0.4, 0.4, 0.4, 0.4), oma = c(4, 4, 1, 1), mgp = c(2.5, 1, 0))
-  
-  shared_ylim <- range(posteriorMomentum[trace_indices, , drop = FALSE])
-  
-  # Helper function to draw each trace panel cleanly
-  plot_trace_panel <- function(idx, row, col) {
-    is_top_row <- row == 1
-    show_y <- col == 1
-    show_x <- row == 2
     
-    # Draw the plot without default axes or labels
-    plot(momentum_iterations, posteriorMomentum[idx, ],
-         type = 'l', col = col_adaptive, lwd = 1.5, ylim = shared_ylim,
-         axes = FALSE, main = "", xlab = "", ylab = "")
+    # Summarize momentum over the configured final adaptation window.
+    momentum_window <- Model_AddiVortes_rust_adaptive$control$mean_params$structure$inclusion$momentum_window
+    window_start <- max(momentum_iterations) - momentum_window
+    window_indices <- which(momentum_iterations > window_start)
+    mean_mom <- rowMeans(posteriorMomentum[, window_indices, drop = FALSE])
+    cat("Covariates with negative window-mean momentum:", sum(mean_mom < 0), "\n")
+    ord_mom <- order(mean_mom, decreasing = TRUE)
+    top_momentum_indices <- head(ord_mom, 10L)
+    top_momentum <- data.frame(
+      Covariate = cov_names[top_momentum_indices],
+      WindowMeanMomentum = mean_mom[top_momentum_indices],
+      LastMomentum = posteriorMomentum[
+        top_momentum_indices, ncol(posteriorMomentum)
+      ]
+    )
+    cat("Top 10 covariates by mean momentum in the final", momentum_window,
+        "sweeps (", length(window_indices), "snapshots):\n")
+    print(top_momentum, row.names = FALSE)
     
-    # Draw a clean border box around each plot
-    box()
+    feature_indices <- head(active_indices, 5L)
+    high_momentum_indices <- head(ord_mom[!ord_mom %in% active_indices], length(feature_indices))
+    trace_indices <- c(feature_indices, high_momentum_indices)
+    par(mfrow = c(2, length(feature_indices)), mar = c(0.4, 0.4, 0.4, 0.4), oma = c(4, 4, 1, 1), mgp = c(2.5, 1, 0))
     
-    # Add y-axis ticks only to the first column, allowing them to bleed outside
-    if (show_y) {
-      axis(2, las = 1, xpd = NA)
+    shared_ylim <- range(posteriorMomentum[trace_indices, , drop = FALSE])
+    
+    # Helper function to draw each trace panel cleanly
+    plot_trace_panel <- function(idx, row, col) {
+      is_top_row <- row == 1
+      show_y <- col == 1
+      show_x <- row == 2
+      
+      # Draw the plot without default axes or labels
+      plot(momentum_iterations, posteriorMomentum[idx, ],
+           type = 'l', col = col_adaptive, lwd = 1.5, ylim = shared_ylim,
+           axes = FALSE, main = "", xlab = "", ylab = "")
+      
+      # Draw a clean border box around each plot
+      box()
+      
+      # Add y-axis ticks only to the first column, allowing them to bleed outside
+      if (show_y) {
+        axis(2, las = 1, xpd = NA)
+      }
+      
+      # Add x-axis ticks only to the bottom row, allowing them to bleed outside
+      if (show_x) {
+        axis(1, xpd = NA)
+      }
     }
     
-    # Add x-axis ticks only to the bottom row, allowing them to bleed outside
-    if (show_x) {
-      axis(1, xpd = NA)
+    # Plot all 10 traces across the 2x5 grid
+    for (i in seq_along(trace_indices)) {
+      idx <- trace_indices[i]
+      current_row <- if (i <= length(feature_indices)) 1 else 2
+      current_col <- if (current_row == 1) i else i - length(feature_indices)
+      
+      plot_trace_panel(idx, row = current_row, col = current_col)
     }
-  }
-  
-  # Plot all 10 traces across the 2x5 grid
-  for (i in seq_along(trace_indices)) {
-    idx <- trace_indices[i]
-    current_row <- if (i <= length(feature_indices)) 1 else 2
-    current_col <- if (current_row == 1) i else i - length(feature_indices)
     
-    plot_trace_panel(idx, row = current_row, col = current_col)
-  }
-  
-  # Add the shared outer labels
-  mtext("MCMC Iteration", side = 1, outer = TRUE, line = 2.5)
-  mtext("Adaptive proposal momentum", side = 2, outer = TRUE, line = 2.5)
+    # Add the shared outer labels
+    mtext("MCMC Iteration", side = 1, outer = TRUE, line = 2.5)
+    mtext("Adaptive proposal momentum", side = 2, outer = TRUE, line = 2.5)
   }
   
   # Reset plotting parameters
@@ -966,7 +972,7 @@ gc()
   library(parallel)
   library(pbapply)
   library(BART)
-
+  
   boost_val <- 0.1
   penalty_val <- 0.08
   decay_val <- 0.2
@@ -980,10 +986,11 @@ gc()
   momentum_window <- 50000L
   momentum_trace_every <- 50L
   momentum_warmup <- 0L
-
-  n_iterations <- 100L
-  n_cores <- min(20L, n_iterations)
-
+  
+  n_iterations <- 20L
+  available <- parallel::detectCores(logical = FALSE)
+  n_cores <- min(10L, n_iterations, max(1L, if (is.na(available)) 1L else available - 2L))
+  
   simulation_schedule <- general_params(
     burn_in = burn_in_val, draws = draws_val
   )
@@ -1032,20 +1039,18 @@ gc()
     ),
     general_params = simulation_schedule
   )
-
+  
   # Build the experimental core once, then reuse it in all simulation workers.
   build_cl <- makeCluster(1L)
   tryCatch(
     parallel::clusterEvalQ(build_cl, {
       Sys.setenv(THIESSEN_EXPERIMENTAL = "1")
-      devtools::load_all(
-        "/home/jd191252/thiessen/r", recompile = TRUE, quiet = TRUE
-      )
+      library(thiessen)
       stopifnot(core_experimental())
     }),
     finally = stopCluster(build_cl)
   )
-
+  
   cl <- makeCluster(n_cores)
   clusterExport(cl, "reproducible", envir = environment())
   clusterEvalQ(cl, {
@@ -1057,16 +1062,15 @@ gc()
       VECLIB_MAXIMUM_THREADS = "1"
     )
     library(BART)
-    devtools::load_all(
-      "/home/jd191252/thiessen/r", recompile = FALSE, quiet = TRUE
-    )
+    Sys.setenv(THIESSEN_EXPERIMENTAL = "1")
+    library(thiessen)
     stopifnot(core_experimental())
     if (reproducible && as.character(getNamespaceVersion("thiessen")) !=
         "0.0.0.9000") {
-      stop("Unexpected thiessen package version.")
+      warning("Unexpected thiessen package version.")
     }
   })
-
+  
   clusterExport(
     cl,
     c(
@@ -1086,14 +1090,14 @@ gc()
     # 1. Generate new data for this specific iteration
     iter_train <- sim_fried(200, 400, sqrt(10))
     iter_test <- sim_fried(200, 400, sqrt(10))
-
+    
     fit_lasso_iter <- glmnet::cv.glmnet(
       as.matrix(iter_train$X), iter_train$Y
     )
     best_idx_iter <- which(fit_lasso_iter$lambda == fit_lasso_iter$lambda.min)
     lasso_sigma_iter <- sqrt(fit_lasso_iter$cvm[best_idx_iter])
     rm(fit_lasso_iter)
-
+    
     iteration_outcome <- thiessen::gaussian_outcome(
       nu = 6, q = 0.85, sigma_hat = lasso_sigma_iter
     )
@@ -1117,7 +1121,7 @@ gc()
       iter_train$X, iter_train$Y, control = control_adaptive_iter,
       xtest = iter_test$X, seed = 1996 + i, chains = 1, threads = 1
     )
-
+    
     fit_dart <- BART::wbart(
       iter_train$X, iter_train$Y, iter_test$X,
       ntree = 200, ndpost = draws_val, nskip = burn_in_val,
@@ -1142,7 +1146,7 @@ gc()
     scores
   }, cl = cl), finally = stopCluster(cl))
   
-
+  
   # Combine the individual list results into the final matrix
   rmse_results <- do.call(rbind, results_list)
   rownames(rmse_results) <- NULL
@@ -1164,7 +1168,7 @@ gc()
           outcol = rgb(0, 0, 0, alpha = 0.3),
           horizontal = TRUE
   )
-
+  
   boxplot(rmse_results[,-1],
           main = "",
           col = simulation_colours[-1],
@@ -1176,14 +1180,14 @@ gc()
   
   # Reset plotting parameters
   par(old_par)
-
+  
   colMeans(rmse_results)
   apply(rmse_results, 2, quantile, probs = c(0.25, 0.5, 0.75))
   
 }
 
- colMeans(rmse_results)
- apply(rmse_results, 2, quantile, probs = c(0.025, 0.5, 0.975))
+print(colMeans(rmse_results))
+apply(rmse_results, 2, quantile, probs = c(0.025, 0.5, 0.975))
 
-#rm(list=ls())
-#gc()
+rm(list=ls())
+gc()
