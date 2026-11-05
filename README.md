@@ -11,8 +11,9 @@ The Friedman Simulation study in the paper can be run in Rstudio using:
 
 source("https://raw.githubusercontent.com/anonymous2738/Sparse_AddiVortes/backup/thiessen-2026-10-13/Paper_Code/Additional_paper_scripts/Simulation%20Studies/Friedman_Graphs")
 ```
-
 or find file located at Paper_Code > Additional_paper_scripts > Simulation Studies > Friedman_Graphs in this repository and download and run the file.
+
+In all the files mentioned the AddiVortes algorithm is run using the thiessen() function and hyperparameter are modified through thiessen_control() function. See #### for more details.
 
 If exact graphs are not produced, then check the warnings in the console as different versions of packages/software may affect the reproducibility of the code.
 
@@ -54,14 +55,15 @@ Warning: Do not run all the datasets, this will take +24hours for the current ex
 It is not recommended to run datasets with +500 observations unless you have 20+ cores and sufficient RAM, otherwise it will take a long time or crash.
 
 To run the experiments either
-
-Licensed under either
 ```R
 
 source("https://raw.githubusercontent.com/anonymous2738/Sparse_AddiVortes/backup/thiessen-2026-10-13/Paper_Code/Additional_paper_scripts/Cross_Validation_Benchmark_VS")
 ```
 or download and run. This script will give you a table of the RMSE values stored as results_ and the boxplot from the paper. The RMSE results from the paper are commented out at the bottom of this script.  
 
+## Copyright License
+
+Licensed under 
 - Apache License, Version 2.0 ([`LICENSE-APACHE`](LICENSE-APACHE))
 - MIT licence ([`LICENSE-MIT`](LICENSE-MIT))
 
